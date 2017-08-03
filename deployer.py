@@ -151,6 +151,15 @@ button a {
 }
 pre {
     overflow-x: auto;
+}
+.success {
+    border: 0.01rem solid #55ff55;
+    background-color: #ccffcc;
+    margin: auto 10rem auto 2rem;
+    padding: 1rem 1rem 1rem 1rem;
+    border-radius: 1rem;
+    -webkit-box-shadow: 0 2px 3px rgba(10, 10, 10, 0.1), 0 0 0 1px rgba(10, 10, 10, 0.1);
+    box-shadow: 0 2px 3px rgba(10, 10, 10, 0.1), 0 0 0 1px rgba(10, 10, 10, 0.1);
 }"""
 
         cherrypy.response.headers['Content-Type'] = 'text/css'
