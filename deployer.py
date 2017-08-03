@@ -381,12 +381,13 @@ pre {
         if deploy_key is None:
             deploy_key = self._generate_deploy_key(name)
 
+        services = kwargs.pop("services", '')
         deployment = {
             "name": name,
             "git_path": kwargs.pop("git_path", ''),
             "git_url": kwargs.pop("git_url", ''),
             "deploy_key": deploy_key,
-            "services": kwargs.pop("services", '').split(',')
+            "services": services.split(',') if services != '' else []
         }
         deployments.append(deployment)
         self._write(deployments)
@@ -507,7 +508,8 @@ pre {
 
         # Restart services
         for service in deployment["services"]:
-            subprocess.check_call(['sudo', 'systemctl', 'restart', service])
+            if service != '':
+                subprocess.check_call(['sudo', 'systemctl', 'restart', service])
 
         content = """
             <div class="success">
