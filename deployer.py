@@ -7,6 +7,7 @@ from hashlib import md5
 import json
 import logging.config
 import os
+import subprocess
 import sys
 import cherrypy
 import ldap
@@ -18,6 +19,8 @@ try:
 except ImportError:
     raise
 from gatherer.config import Configuration
+from gatherer.domain import Source
+from gatherer.git import Git_Repository
 
 class Deployer(object):
     # pylint: disable=no-self-use
@@ -476,6 +479,34 @@ pre {
             </form>""".format(session=self._get_session_html(), success=success,
                               form=form)
         return self.COMMON_HTML.format(title='Edit', content=content)
+
+    @cherrypy.expose
+    def deploy(self, name):
+        """
+        Update the deployment based on the configuration.
+        """
+
+        self._validate_login()
+
+        if cherrypy.request.method != 'POST':
+            raise cherrypy.HTTPRedirect('list')
+
+        deployment = self._find_deployment(name)
+
+        if "git_url" not in deployment:
+            raise ValueError("Cannot retrieve Git repository: misconfiguration")
+
+        # Update Git repository using deploy key
+        source = Source.from_type('git', name=name, url=deployment["git_url"])
+        source.credentials_path = deployment["deploy_key"]
+        repository = Git_Repository.from_source(source, deployment["git_path"],
+                                                checkout=True)
+
+        logging.info('Updated repository %s', repository.repo_name)
+
+        # Restart services
+        for service in deployment["services"]:
+            subprocess.check_call(['sudo', 'systemctl', 'restart', service])
 
 def parse_args():
     """
