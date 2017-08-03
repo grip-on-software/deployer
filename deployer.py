@@ -384,6 +384,7 @@ pre {
         deployment = {
             "name": name,
             "git_path": kwargs.pop("git_path", ''),
+            "git_url": kwargs.pop("git_url", ''),
             "deploy_key": deploy_key,
             "services": kwargs.pop("services", '').split(',')
         }
@@ -405,7 +406,7 @@ pre {
         if cherrypy.request.method == 'POST':
             public_key = self._create_deployment(name, kwargs)[1]
 
-            success = """<div>
+            success = """<div class="success">
                 The deployment has been created. The new deploy key's public
                 part is shown below. Register this key in the GitLab repository.
                 You can <a href="edit?name={name}">edit the deployment</a>,
@@ -455,7 +456,7 @@ pre {
                 self._create_deployment(name, kwargs, deploy_key=deploy_key,
                                         deployments=deployments)
 
-            success = """<div>
+            success = """<div class="success">
                 The deployment has been updated. The {state} deploy key's public
                 part is shown below. Ensure that this key exists in the GitLab
                 repository. You can edit the deployment configuration again or
@@ -507,6 +508,14 @@ pre {
         # Restart services
         for service in deployment["services"]:
             subprocess.check_call(['sudo', 'systemctl', 'restart', service])
+
+        content = """
+            <div class="success">
+                The deployment of {name} has been updated.
+                You can <a href="list">return to the list</a>.
+            </div>""".format(name=name)
+
+        return self.COMMON_HTML.format(title='Deploy', content=content)
 
 def parse_args():
     """
