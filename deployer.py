@@ -572,6 +572,8 @@ def parse_args():
                         help='Path to store logs at in production')
     parser.add_argument('--deploy-path', dest='deploy_path',
                         default='.', help='Path to deploy data')
+    parser.add_argument('--port', type=int, default=8080,
+                        help='Port for the server to listen on')
     parser.add_argument('--daemonize', action='store_true', default=False,
                         help='Run the server as a daemon')
     parser.add_argument('--pidfile', help='Store process ID in file')
@@ -658,6 +660,7 @@ def bootstrap():
             'tools.sessions.on': True
         }
     }
+    cherrypy.config.update({'server.socket_port': args.port})
     cherrypy.tree.mount(Deployer(args), '/deploy', conf)
     cherrypy.daemon.start(daemonize=args.daemonize, pidfile=args.pidfile,
                           fastcgi=args.fastcgi, scgi=args.scgi, cgi=args.cgi)
