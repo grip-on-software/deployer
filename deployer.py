@@ -6,14 +6,29 @@ import argparse
 import json
 import logging.config
 import os
+import sys
 import cherrypy
 from requests.utils import quote
+try:
+    from mock import MagicMock
+    sys.modules['abraxas'] = MagicMock()
+    from sshdeploy.key import Key
+except ImportError:
+    raise
 
 class Deployer(object):
     # pylint: disable=no-self-use
     """
     Deployer web interface.
     """
+
+    FIELDS = [
+        ("name", "Deployment name", str),
+        ("git_path", "Git clone path", str),
+        ("git_url", "Git repository URL", str),
+        ("deploy_key", "Keep deploy key", bool),
+        ("services", "Systemctl service names", list)
+    ]
 
     COMMON_HTML = """<!doctype html>
 <html>
@@ -32,6 +47,8 @@ class Deployer(object):
 
     def __init__(self, args):
         self.args = args
+        self.deploy_filename = os.path.join(self.args.deploy_path,
+                                            'deployment.json')
 
     def _validate_page(self, page):
         try:
@@ -125,6 +142,9 @@ button a {
 }
 .logout a:hover {
     color: #ff5555;
+}
+pre {
+    overflow-x: auto;
 }"""
 
     @cherrypy.expose
@@ -139,20 +159,26 @@ button a {
         raise cherrypy.HTTPRedirect('index')
 
     @staticmethod
-    def _validate_login(username=None, password=None, page=None):
+    def _validate_login(username=None, password=None, page=None, params=None):
         if page is None:
             page = cherrypy.request.path_info.strip('/')
 
-        params = quote(cherrypy.request.query_string)
-        redirect = 'index?page={}&params={}'.format(page, params)
-        if cherrypy.request.method == 'POST':
-            if username == 'a' and password == 'b':
-                cherrypy.session['authenticated'] = 'a'
+        if params is None:
+            params = quote(cherrypy.request.query_string)
+
+        redirect = 'index?page={}'.format(page)
+        if params != '' and page != '':
+            redirect += '&params={}'.format(params)
+
+        if username is not None or password is not None:
+            if cherrypy.request.method == 'POST':
+                if username == 'a' and password == 'b':
+                    cherrypy.session['authenticated'] = 'a'
+                else:
+                    logging.info('Credentials invalid')
+                    raise cherrypy.HTTPRedirect(redirect)
             else:
-                logging.info('Credentials invalid')
-                raise cherrypy.HTTPRedirect(redirect)
-        elif username is not None or password is not None:
-            raise cherrypy.HTTPError(400, 'POST only allowed for username and password')
+                raise cherrypy.HTTPError(400, 'POST only allowed for username and password')
         elif 'authenticated' not in cherrypy.session:
             logging.info('No credentials or session found')
             raise cherrypy.HTTPRedirect(redirect)
@@ -164,21 +190,22 @@ button a {
         """
 
         self._validate_page(page)
-        self._validate_login(username=username, password=password, page=page)
+        self._validate_login(username=username, password=password, page=page,
+                             params=params)
 
         if params != '':
             page += '?' + params
         raise cherrypy.HTTPRedirect(page)
 
     def _read(self):
-        if os.path.exists(self.args.deploy_path):
-            with open(self.args.deploy_path) as deploy_file:
+        if os.path.exists(self.deploy_filename):
+            with open(self.deploy_filename) as deploy_file:
                 return json.load(deploy_file)
         else:
             return []
 
     def _write(self, deployments):
-        with open(self.args.deploy_path, 'w') as deploy_file:
+        with open(self.deploy_filename, 'w') as deploy_file:
             json.dump(deployments, deploy_file)
 
     @staticmethod
@@ -234,67 +261,148 @@ button a {
 
         raise cherrypy.HTTPError(404, 'Deployment {} does not exist'.format(name))
 
-    def _format_fields(self, deployment, fields):
+    def _format_fields(self, deployment, **excluded):
         form = ''
-        for field_name, display_name, field_type in fields:
+        for field_name, display_name, field_type in self.FIELDS:
+            if field_name in excluded:
+                continue
+
             value = deployment.get(field_name, '')
             input_type = 'text'
+            props = ''
             if issubclass(field_type, list):
                 value = ','.join(value)
             elif issubclass(field_type, bool):
-                value = '1' if value != '' else '0'
+                if value != '':
+                    props += ' checked'
+
+                value = '1'
                 input_type = 'checkbox'
 
             form += """
                 <label>
                     {display_name}:
-                    <input type="{input_type}" name="{field_name}" value="{value}">
+                    <input type="{input_type}" name="{field_name}" value="{value}"{props}>
                 </label>""".format(display_name=display_name,
                                    input_type=input_type,
                                    field_name=field_name,
-                                   value=value)
+                                   value=value, props=props)
 
         return form
 
+    def _generate_deploy_key(self, name):
+        data = {
+            'purpose': 'deploy key for {}'.format(name),
+            'keygen-options': '',
+            'abraxas-account': False,
+            'servers': {},
+            'clients': {}
+        }
+        update = []
+        key_file = os.path.join(self.args.deploy_path, 'key-{}'.format(name))
+        key = Key(key_file, data, update, {}, False)
+        key.generate()
+        return key.keyname
+
+    def _create_deployment(self, name, kwargs, deploy_key=None,
+                           deployments=None):
+        if deployments is None:
+            deployments = self._read()
+
+        if any(deployment["name"] == name for deployment in deployments):
+            raise ValueError("Deployment '{}' already exists".format(name))
+
+        if deploy_key is None:
+            deploy_key = self._generate_deploy_key(name)
+
+        deployment = {
+            "name": name,
+            "git_path": kwargs.pop("git_path", ''),
+            "deploy_key": deploy_key,
+            "services": kwargs.pop("services", '').split(',')
+        }
+        deployments.append(deployment)
+        self._write(deployments)
+        with open('{}.pub'.format(deploy_key), 'r') as public_key_file:
+            public_key = public_key_file.read()
+
+        return deployment, public_key
+
     @cherrypy.expose
-    def edit(self, name, old_name=None, **kwargs):
+    def create(self, name='', **kwargs):
         """
-        Display single deployment configuration.
+        Create a new deployment using a form or handle the form submission.
         """
 
         self._validate_login()
+
+        if cherrypy.request.method == 'POST':
+            public_key = self._create_deployment(name, kwargs)[1]
+
+            success = """<div>
+                The deployment has been created. The new deploy key's public
+                part is shown below. Register this key in the GitLab repository.
+                You can <a href="edit?name={name}">edit the deployment</a>,
+                <a href="list">go to the list</a> or create a new deployment.
+            </div>
+            <pre>{deploy_key}</pre>""".format(name=name, deploy_key=public_key)
+        else:
+            success = ''
+
+        content = """
+            {session}
+            {success}
+            <form class="edit" action="create" method="post">
+                {form}
+                <button>Update</button>
+            </form>""".format(session=self._get_session_html(), success=success,
+                              form=self._format_fields({}, deploy_key=False))
+        return self.COMMON_HTML.format(title='Create', content=content)
+
+    @cherrypy.expose
+    def edit(self, name=None, old_name=None, **kwargs):
+        """
+        Display an existing deployment configuration in an editable form, or
+        handle the form submission to update the deployment.
+        """
+
+        self._validate_login()
+        if name is None:
+            raise cherrypy.HTTPError(404, "Missing parameter 'name'")
+
         deployments = self._read()
 
         if cherrypy.request.method == 'POST':
-            old_deployment = self._find_deployment(old_name)
-            deployments = [
-                deploy for deploy in deployments if deploy["name"] != old_name
-            ]
+            old_deployment = self._find_deployment(old_name,
+                                                   deployments=deployments)
+            deployments.remove(old_deployment)
             if kwargs.pop("deploy_key"):
                 deploy_key = old_deployment.get("deploy_key", '')
+                state = 'original'
             else:
-                deploy_key = ''
-            deployment = {
-                "name": name,
-                "git_path": kwargs.pop("git_path", ''),
-                "deploy_key": deploy_key,
-                "services": kwargs.pop("services", '').split(',')
-            }
-            deployments.append(deployment)
-            self._write(deployments)
-            success = '<p>The deployment has been updated - <a href="list">back to list</p>'
+                deploy_key = None
+                state = 'new'
+                if os.path.exists(old_deployment.get("deploy_key", '')):
+                    os.remove(old_deployment.get("deploy_key", ''))
+
+            deployment, public_key = \
+                self._create_deployment(name, kwargs, deploy_key=deploy_key,
+                                        deployments=deployments)
+
+            success = """<div>
+                The deployment has been updated. The {state} deploy key's public
+                part is shown below. Ensure that this key exists in the GitLab
+                repository. You can edit the deployment configuration again or
+                <a href="list">go to the list</a>.
+            </div>
+            <pre>{deploy_key}</pre>""".format(state=state,
+                                              deploy_key=public_key)
         else:
             success = ''
             deployment = self._find_deployment(name)
 
-        fields = [
-            ("name", "Deployment name", str),
-            ("git_path", "Git clone path", str),
-            ("deploy_key", "Keep deploy key", bool),
-            ("services", "Systemctl service names", list)
-        ]
         form = """<input type="hidden" name="old_name" value="{name}">""".format(name=name)
-        form += self._format_fields(deployment, fields)
+        form += self._format_fields(deployment)
 
         content = """
             {session}
@@ -303,7 +411,7 @@ button a {
                 {form}
                 <button>Update</button>
             </form>""".format(session=self._get_session_html(), success=success,
-                              form=form)
+                              name=name, form=form)
         return self.COMMON_HTML.format(title='Edit', content=content)
 
 def parse_args():
@@ -317,7 +425,7 @@ def parse_args():
     parser.add_argument('--log-path', dest='log_path', default='.',
                         help='Path to store logs at in production')
     parser.add_argument('--deploy-path', dest='deploy_path',
-                        default='deployment.json', help='Path to deploy data')
+                        default='.', help='Path to deploy data')
     return parser.parse_args()
 
 def setup_log(debug=False, log_path='.'):
