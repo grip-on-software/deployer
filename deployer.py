@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import cherrypy
+import cherrypy.daemon
 import ldap
 from requests.utils import quote
 try:
@@ -571,6 +572,16 @@ def parse_args():
                         help='Path to store logs at in production')
     parser.add_argument('--deploy-path', dest='deploy_path',
                         default='.', help='Path to deploy data')
+    parser.add_argument('--daemonize', action='store_true', default=False,
+                        help='Run the server as a daemon')
+    parser.add_argument('--pidfile', help='Store process ID in file')
+    server = parser.add_mutually_exclusive_group()
+    server.add_argument('--fastcgi', action='store_true', default=False,
+                        help='Start a FastCGI server instead of HTTP')
+    server.add_argument('--scgi', action='store_true', default=False,
+                        help='Start a SCGI server instead of HTTP')
+    server.add_argument('--cgi', action='store_true', default=False,
+                        help='Start a CGI server instead of the HTTP')
     return parser.parse_args()
 
 def setup_log(debug=False, log_path='.'):
@@ -647,7 +658,9 @@ def bootstrap():
             'tools.sessions.on': True
         }
     }
-    cherrypy.quickstart(Deployer(args), '/deploy', conf)
+    cherrypy.tree.mount(Deployer(args), '/deploy', conf)
+    cherrypy.daemon.start(daemonize=args.daemonize, pidfile=args.pidfile,
+                          fastcgi=args.fastcgi, scgi=args.scgi, cgi=args.cgi)
 
 if __name__ == '__main__':
     bootstrap()
