@@ -21,6 +21,7 @@ except ImportError:
 from gatherer.config import Configuration
 from gatherer.domain import Source
 from gatherer.git import Git_Repository
+from gatherer.jenkins import Jenkins
 
 class Deployer(object):
     # pylint: disable=no-self-use
@@ -32,6 +33,7 @@ class Deployer(object):
         ("name", "Deployment name", str),
         ("git_path", "Git clone path", str),
         ("git_url", "Git repository URL", str),
+        ("jenkins_job", "Jenkins job", str),
         ("deploy_key", "Keep deploy key", bool),
         ("services", "Systemctl service names", list)
     ]
@@ -396,6 +398,7 @@ pre {
             "git_path": kwargs.pop("git_path", ''),
             "git_url": kwargs.pop("git_url", ''),
             "deploy_key": deploy_key,
+            "jenkins_job": kwargs.pop("jenkins_job", ''),
             "services": services.split(',') if services != '' else []
         }
         deployments.append(deployment)
@@ -491,6 +494,31 @@ pre {
                               form=form)
         return self.COMMON_HTML.format(title='Edit', content=content)
 
+    def _check_jenkins(self, deployment):
+        jenkins = Jenkins.from_config(self.config)
+        job = jenkins.get_job(deployment["jenkins_job"])
+        build = job.last_build
+        if not build.exists:
+            raise RuntimeError("Jenkins job or build could not be found")
+
+        for action in build.data['actions']:
+            if 'buildsByBranchName' in action:
+                if 'origin/master' not in action['buildsByBranchName']:
+                    raise RuntimeError('Master branch build could not be found')
+
+                branch = action['buildsByBranchName']['origin/master']
+                if len(branch['revision']['branch']) > 1:
+                    raise ValueError('Latest build is caused by merge request')
+
+                build_number = branch['buildNumber']
+                if build_number != build.number:
+                    build = job.get_build(build_number)
+
+                break
+
+        if build.result != "SUCCESS":
+            raise ValueError("Build result was not success, but {}".format(build.result))
+
     @cherrypy.expose
     def deploy(self, name):
         """
@@ -506,6 +534,9 @@ pre {
 
         if "git_url" not in deployment:
             raise ValueError("Cannot retrieve Git repository: misconfiguration")
+
+        if deployment.get("jenkins_job", '') != '':
+            self._check_jenkins(deployment)
 
         # Update Git repository using deploy key
         source = Source.from_type('git', name=name, url=deployment["git_url"])
