@@ -23,6 +23,7 @@ from gatherer.config import Configuration
 from gatherer.domain import Source
 from gatherer.git import Git_Repository
 from gatherer.jenkins import Jenkins
+from gatherer.log import Log_Setup
 
 class Deployer(object):
     # pylint: disable=no-self-use
@@ -566,8 +567,9 @@ def parse_args():
     """
 
     parser = argparse.ArgumentParser(description='Run deployment WSGI server')
+    Log_Setup.add_argument(parser)
     parser.add_argument('--debug', action='store_true', default=False,
-                        help='Display logging in terminal')
+                        help='Display logging in terminal and traces on web')
     parser.add_argument('--log-path', dest='log_path', default='.',
                         help='Path to store logs at in production')
     parser.add_argument('--deploy-path', dest='deploy_path',
@@ -586,19 +588,19 @@ def parse_args():
                         help='Start a CGI server instead of the HTTP')
     return parser.parse_args()
 
-def setup_log(debug=False, log_path='.'):
+def setup_log(debug=False, log_level='INFO', log_path='.'):
     """
     Setup logging.
     """
 
     stream_handler = {
-        'level':'INFO',
+        'level': log_level,
         'class':'logging.StreamHandler',
         'formatter': 'standard',
         'stream': 'ext://sys.stdout'
     }
     file_handler = {
-        'level':'INFO',
+        'level': log_level,
         'class': 'logging.handlers.RotatingFileHandler',
         'formatter': 'void',
         'maxBytes': 10485760,
@@ -629,16 +631,16 @@ def setup_log(debug=False, log_path='.'):
         'loggers': {
             '': {
                 'handlers': ['default' if debug else 'python'],
-                'level': 'INFO'
+                'level': log_level
             },
             'cherrypy.access': {
                 'handlers': ['cherrypy_console' if debug else 'cherrypy_access'],
-                'level': 'INFO',
+                'level': log_level,
                 'propagate': False
             },
             'cherrypy.error': {
                 'handlers': ['cherrypy_console' if debug else 'cherrypy_error'],
-                'level': 'INFO',
+                'level': log_level,
                 'propagate': False
             },
         }
@@ -651,7 +653,7 @@ def bootstrap():
     """
 
     args = parse_args()
-    setup_log(args.debug, args.log_path)
+    setup_log(debug=args.debug, log_level=args.log, log_path=args.log_path)
     conf = {
         'global': {
             'request.show_tracebacks': args.debug
