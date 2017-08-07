@@ -198,6 +198,9 @@ pre {
         raise cherrypy.HTTPRedirect('index')
 
     def _retrieve_ldap_group(self):
+        if self.args.ldap is False:
+            return []
+
         logging.info('Retrieving LDAP group list using manager DN...')
         group_attr = self.config.get('ldap', 'group_attr')
         result = self._query_ldap(self.config.get('ldap', 'manager_dn'),
@@ -267,11 +270,14 @@ pre {
 
         if username is not None or password is not None:
             if cherrypy.request.method == 'POST':
-                if not self._validate_ldap(username, password):
+                if self.args.ldap is False:
+                    cherrypy.session['authenticated'] = username
+                elif not self._validate_ldap(username, password):
                     raise cherrypy.HTTPRedirect(redirect)
             else:
                 raise cherrypy.HTTPError(400, 'POST only allowed for username and password')
-        elif 'authenticated' not in cherrypy.session:
+
+        if 'authenticated' not in cherrypy.session:
             logging.info('No credentials or session found')
             raise cherrypy.HTTPRedirect(redirect)
 
@@ -622,11 +628,14 @@ def parse_args():
                         help='Path to store logs at in production')
     parser.add_argument('--deploy-path', dest='deploy_path',
                         default='.', help='Path to deploy data')
+    parser.add_argument('--no-ldap', action='store_false', default=True,
+                        dest='ldap', help='Open login (no LDAP verification)')
     parser.add_argument('--port', type=int, default=8080,
                         help='Port for the server to listen on')
     parser.add_argument('--daemonize', action='store_true', default=False,
                         help='Run the server as a daemon')
     parser.add_argument('--pidfile', help='Store process ID in file')
+
     server = parser.add_mutually_exclusive_group()
     server.add_argument('--fastcgi', action='store_true', default=False,
                         help='Start a FastCGI server instead of HTTP')
