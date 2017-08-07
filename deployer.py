@@ -615,7 +615,7 @@ def parse_args():
     """
 
     parser = argparse.ArgumentParser(description='Run deployment WSGI server')
-    Log_Setup.add_argument(parser)
+    Log_Setup.add_argument(parser, default='INFO')
     parser.add_argument('--debug', action='store_true', default=False,
                         help='Display logging in terminal and traces on web')
     parser.add_argument('--log-path', dest='log_path', default='.',
