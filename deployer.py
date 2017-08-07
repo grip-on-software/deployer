@@ -9,9 +9,11 @@ import logging.config
 import os
 import subprocess
 import sys
+import bigboat
 import cherrypy
 import cherrypy.daemon
 import ldap
+import yaml
 from requests.utils import quote
 try:
     from mock import MagicMock
@@ -31,15 +33,26 @@ class Deployer(object):
     Deployer web interface.
     """
 
+    # Fields in the deployment and their human-readable variant.
     FIELDS = [
         ("name", "Deployment name", str),
         ("git_path", "Git clone path", str),
         ("git_url", "Git repository URL", str),
         ("jenkins_job", "Jenkins job", str),
         ("deploy_key", "Keep deploy key", bool),
-        ("services", "Systemctl service names", list)
+        ("services", "Systemctl service names", list),
+        ("bigboat_url", "URL to BigBoat instance", str),
+        ("bigboat_key", "API key of BigBoat instance", str),
+        ("bigboat_compose", "Repository path to compose files", str)
     ]
 
+    # Compose files for BigBoat
+    FILES = [
+        ('docker-compose.yml', 'dockerCompose'),
+        ('bigboat-compose.yml', 'bigboatCompose')
+    ]
+
+    # Common HTML template
     COMMON_HTML = """<!doctype html>
 <html>
     <head>
@@ -401,7 +414,10 @@ pre {
             "git_url": kwargs.pop("git_url", ''),
             "deploy_key": deploy_key,
             "jenkins_job": kwargs.pop("jenkins_job", ''),
-            "services": services.split(',') if services != '' else []
+            "services": services.split(',') if services != '' else [],
+            "bigboat_url": kwargs.pop("bigboat_url", ''),
+            "bigboat_key": kwargs.pop("bigboat_key", ''),
+            "bigboat_compose": kwargs.pop("bigboat_compose", ''),
         }
         deployments.append(deployment)
         self._write(deployments)
@@ -521,6 +537,35 @@ pre {
         if build.result != "SUCCESS":
             raise ValueError("Build result was not success, but {}".format(build.result))
 
+    def _update_bigboat(self, deployment, repository):
+        if deployment.get("bigboat_key", '') == '':
+            raise ValueError("BigBoat API key required to update BigBoat")
+
+        path = deployment.get("bigboat_compose", '')
+        files = {}
+        for filename, api_filename in self.FILES:
+            full_filename = '{}/{}'.format(path, filename).lstrip('./')
+            files[api_filename] = repository.get_contents(full_filename)
+
+        compose = yaml.load(files['bigboatCompose'])
+        client = bigboat.Client_v2(deployment["bigboat_url"],
+                                   deployment["bigboat_key"])
+
+        name = compose['name']
+        version = compose['version']
+        application = client.get_app(name, version)
+        if application is None:
+            logging.warning('Application %s version %s not on %s, creating.',
+                            name, version, deployment['bigboat_url'])
+            if client.update_app(name, version) is None:
+                raise RuntimeError('Cannot register application')
+
+        for api_filename, contents in files.items():
+            if not client.update_compose(name, version, api_filename, contents):
+                raise RuntimeError('Cannot update compose file')
+
+        client.update_instance(name, name, version)
+
     @cherrypy.expose
     def deploy(self, name):
         """
@@ -552,6 +597,9 @@ pre {
         for service in deployment["services"]:
             if service != '':
                 subprocess.check_call(['sudo', 'systemctl', 'restart', service])
+
+        if deployment.get("bigboat_url", '') != '':
+            self._update_bigboat(deployment, repository)
 
         content = """
             <div class="success">
