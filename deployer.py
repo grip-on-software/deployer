@@ -568,7 +568,7 @@ pre {
         if not repo.exists():
             return False
 
-        return Git_Repository.is_up_to_date(source, repo.repo.head.commit)
+        return Git_Repository.is_up_to_date(source, repo.repo.head.commit.hexsha)
 
     def _get_source(self, name, deployment=None):
         if deployment is None:
