@@ -173,15 +173,22 @@ button a {
 pre {
     overflow-x: auto;
 }
-.success {
-    border: 0.01rem solid #55ff55;
-    background-color: #ccffcc;
+.success, .error {
     margin: auto 10rem auto 2rem;
     padding: 1rem 1rem 1rem 1rem;
     border-radius: 1rem;
     -webkit-box-shadow: 0 2px 3px rgba(10, 10, 10, 0.1), 0 0 0 1px rgba(10, 10, 10, 0.1);
     box-shadow: 0 2px 3px rgba(10, 10, 10, 0.1), 0 0 0 1px rgba(10, 10, 10, 0.1);
-}"""
+}
+.success {
+    border: 0.01rem solid #55ff55;
+    background-color: #ccffcc;
+}
+.error {
+    border: 0.01rem solid #ff5555;
+    background-color: #ffcccc;
+}
+"""
 
         cherrypy.response.headers['Content-Type'] = 'text/css'
         cherrypy.response.headers['ETag'] = md5(content).hexdigest()
@@ -284,11 +291,17 @@ pre {
                         {deployment[name]}
                         <button formaction="deploy" name="name" value="{deployment[name]}" formmethod="post">Deploy</button>
                         <button formaction="edit" name="name" value="{deployment[name]}">Edit</button>
+                        {status}
                     </li>"""
-            items = [
-                item.format(deployment=deployment)
-                for deployment in deployments
-            ]
+            items = []
+            for deployment in deployments:
+                if self._is_up_to_date(deployment):
+                    status = 'Up to date'
+                else:
+                    status = 'Outdated'
+
+                items.append(item.format(deployment=deployment, status=status))
+
             content += """
             <form>
                 <ul class="items">
@@ -545,18 +558,21 @@ pre {
 
         client.update_instance(name, name, version)
 
-    @cherrypy.expose
-    def deploy(self, name):
-        """
-        Update the deployment based on the configuration.
-        """
+    def _is_up_to_date(self, deployment):
+        try:
+            source = self._get_source(deployment["name"], deployment)
+        except ValueError:
+            return False
 
-        self._validate_login()
+        repo = Git_Repository(source, deployment["git_path"])
+        if not repo.exists():
+            return False
 
-        if cherrypy.request.method != 'POST':
-            raise cherrypy.HTTPRedirect('list')
+        return Git_Repository.is_up_to_date(source, repo.repo.head.commit)
 
-        deployment = self._find_deployment(name)
+    def _get_source(self, name, deployment=None):
+        if deployment is None:
+            deployment = self._find_deployment(name)
 
         if "git_url" not in deployment:
             raise ValueError("Cannot retrieve Git repository: misconfiguration")
@@ -564,6 +580,12 @@ pre {
         # Describe Git source repository
         source = Source.from_type('git', name=name, url=deployment["git_url"])
         source.credentials_path = deployment["deploy_key"]
+
+        return source
+
+    def _deploy(self, name):
+        deployment = self._find_deployment(name)
+        source = self._get_source(name, deployment)
 
         # Check Jenkins job success
         if deployment.get("jenkins_job", '') != '':
@@ -584,11 +606,32 @@ pre {
         if deployment.get("bigboat_url", '') != '':
             self._update_bigboat(deployment, repository)
 
-        content = """
-            <div class="success">
-                The deployment of {name} has been updated.
-                You can <a href="list">return to the list</a>.
-            </div>""".format(name=name)
+    @cherrypy.expose
+    def deploy(self, name):
+        """
+        Update the deployment based on the configuration.
+        """
+
+        self._validate_login()
+
+        if cherrypy.request.method != 'POST':
+            raise cherrypy.HTTPRedirect('list')
+
+        try:
+            self._deploy(name)
+        except (RuntimeError, ValueError) as error:
+            content = """
+                <div class="error">
+                    The deployment of {name} could not be updated completely.
+                    The following error occurred: {error}.
+                    You can <a href="list">return to the list</a>.
+                </div>""".format(name=name, error=str(error))
+        else:
+            content = """
+                <div class="success">
+                    The deployment of {name} has been updated.
+                    You can <a href="list">return to the list</a>.
+                </div>""".format(name=name)
 
         return self.COMMON_HTML.format(title='Deploy', content=content)
 
