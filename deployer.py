@@ -499,7 +499,7 @@ pre {
 
                 # Check whether the revision that was built is actually the
                 # upstream repository's HEAD commit for this branch.
-                revision = branch_build['revision']
+                revision = branch_build['revision']['SHA1']
                 if not Git_Repository.is_up_to_date(source, revision):
                     raise ValueError('Git repository HEAD is not {}'.format(revision))
 
