@@ -469,28 +469,50 @@ pre {
                               form=form)
         return self.COMMON_HTML.format(title='Edit', content=content)
 
-    def _check_jenkins(self, deployment):
+    def _check_jenkins(self, deployment, source):
+        # Check build stability before deployment based on Jenkins job success.
         jenkins = Jenkins.from_config(self.config)
         job = jenkins.get_job(deployment["jenkins_job"])
+        # Retrieve the latest build job. This may be a build for another
+        # branch, so we check the builds by branch name on this build.
+        # The job may have no builds in which case we cannot check stability.
         build = job.last_build
         if not build.exists:
             raise RuntimeError("Jenkins job or build could not be found")
 
         for action in build.data['actions']:
             if 'buildsByBranchName' in action:
+                # Check if there has been a build for the master branch.
                 if 'origin/master' not in action['buildsByBranchName']:
                     raise RuntimeError('Master branch build could not be found')
 
-                branch = action['buildsByBranchName']['origin/master']
-                if len(branch['revision']['branch']) > 1:
+                # Retrieve the branches that were involved in this build.
+                # Branch may be duplicated in case of merge strategies.
+                # We only accept master branch builds if the latest build for
+                # that branch not a merge request build, since the stability of
+                # the master branch code is not demonstrated by this build.
+                branch_build = action['buildsByBranchName']['origin/master']
+                branch_data = branch_build['revision']['branch']
+                branches = set([branch['name'] for branch in branch_data])
+                if len(branches) > 1:
                     raise ValueError('Latest build is caused by merge request')
 
-                build_number = branch['buildNumber']
+                # Check whether the revision that was built is actually the
+                # upstream repository's HEAD commit for this branch.
+                revision = branch_build['revision']
+                if not Git_Repository.is_up_to_date(source, revision):
+                    raise ValueError('Git repository HEAD is not {}'.format(revision))
+
+                # Retrieve the build job that actually built the master branch.
+                build_number = branch_build['buildNumber']
                 if build_number != build.number:
                     build = job.get_build(build_number)
 
                 break
 
+        # Check whether the latest (branch) build is complete and successful.
+        if build.building:
+            raise ValueError("Build is not complete")
         if build.result != "SUCCESS":
             raise ValueError("Build result was not success, but {}".format(build.result))
 
@@ -539,12 +561,15 @@ pre {
         if "git_url" not in deployment:
             raise ValueError("Cannot retrieve Git repository: misconfiguration")
 
-        if deployment.get("jenkins_job", '') != '':
-            self._check_jenkins(deployment)
-
-        # Update Git repository using deploy key
+        # Describe Git source repository
         source = Source.from_type('git', name=name, url=deployment["git_url"])
         source.credentials_path = deployment["deploy_key"]
+
+        # Check Jenkins job success
+        if deployment.get("jenkins_job", '') != '':
+            self._check_jenkins(deployment, source)
+
+        # Update Git repository using deploy key
         repository = Git_Repository.from_source(source, deployment["git_path"],
                                                 checkout=True)
 
@@ -555,6 +580,7 @@ pre {
             if service != '':
                 subprocess.check_call(['sudo', 'systemctl', 'restart', service])
 
+        # Update BigBoat dashboard applications
         if deployment.get("bigboat_url", '') != '':
             self._update_bigboat(deployment, repository)
 
