@@ -2,6 +2,8 @@
 Frontend for accessing deployments and (re)starting them.
 """
 
+from past.builtins import basestring
+from builtins import object
 import argparse
 from hashlib import md5
 import json
@@ -12,7 +14,6 @@ import sys
 import bigboat
 import cherrypy
 import cherrypy.daemon
-import ldap
 import yaml
 from requests.utils import quote
 try:
@@ -21,6 +22,7 @@ try:
     from sshdeploy.key import Key
 except ImportError:
     raise
+from gatherer.authentication import LoginException, Authentication
 from gatherer.config import Configuration
 from gatherer.domain import Source
 from gatherer.git import Git_Repository
@@ -73,7 +75,9 @@ class Deployer(object):
         self.config = Configuration.get_settings()
         self.deploy_filename = os.path.join(self.args.deploy_path,
                                             'deployment.json')
-        self.group = self._retrieve_ldap_group()
+
+        auth_type = Authentication.get_type(args.auth)
+        self.authentication = auth_type(args)
 
     def _validate_page(self, page):
         try:
@@ -197,65 +201,6 @@ pre {
 
         raise cherrypy.HTTPRedirect('index')
 
-    def _retrieve_ldap_group(self):
-        if self.args.ldap is False:
-            return []
-
-        logging.info('Retrieving LDAP group list using manager DN...')
-        group_attr = self.config.get('ldap', 'group_attr')
-        result = self._query_ldap(self.config.get('ldap', 'manager_dn'),
-                                  self.config.get('ldap', 'manager_password'),
-                                  search=self.config.get('ldap', 'group_dn'),
-                                  search_attrs=[str(group_attr)])[0][1]
-        return result[group_attr]
-
-    def _query_ldap(self, username, password, search=None, search_attrs=None):
-        client = ldap.initialize(self.config.get('ldap', 'server'))
-        # Synchronous bind
-        client.set_option(ldap.OPT_REFERRALS, 0)
-
-        try:
-            client.simple_bind_s(username, password)
-            if search is not None:
-                return client.search_s(self.config.get('ldap', 'root_dn'),
-                                       ldap.SCOPE_SUBTREE, search,
-                                       search_attrs)
-
-            return True
-        except ldap.INVALID_CREDENTIALS:
-            return False
-        finally:
-            client.unbind()
-
-        return True
-
-    def _validate_ldap(self, username, password):
-        # Pre-check: user in group?
-        if username not in self.group:
-            logging.info('User %s not in group', username)
-            return False
-
-        # Next check: get DN from uid
-        search = self.config.get('ldap', 'search_filter').format(username)
-        display_name_field = str(self.config.get('ldap', 'display_name'))
-        result = self._query_ldap(self.config.get('ldap', 'manager_dn'),
-                                  self.config.get('ldap', 'manager_password'),
-                                  search=search,
-                                  search_attrs=[display_name_field])[0]
-
-        # Retrieve DN and display name
-        login_name = result[0]
-        display_name = result[1][display_name_field][0]
-
-        # Final check: log in
-        if self._query_ldap(login_name, password):
-            logging.info('Authenticated as {}'.format(username))
-            cherrypy.session['authenticated'] = display_name
-            return True
-
-        logging.info('Credentials invalid')
-        return False
-
     def _validate_login(self, username=None, password=None, page=None,
                         params=None):
         if page is None:
@@ -270,9 +215,15 @@ pre {
 
         if username is not None or password is not None:
             if cherrypy.request.method == 'POST':
-                if self.args.ldap is False:
-                    cherrypy.session['authenticated'] = username
-                elif not self._validate_ldap(username, password):
+                try:
+                    result = self.authentication.validate(username, password)
+                    logging.info('Authenticated as %s', username)
+                    if isinstance(result, basestring):
+                        cherrypy.session['authenticated'] = result
+                    else:
+                        cherrypy.session['authenticated'] = username
+                except LoginException as error:
+                    logging.info(str(error))
                     raise cherrypy.HTTPRedirect(redirect)
             else:
                 raise cherrypy.HTTPError(400, 'POST only allowed for username and password')
@@ -628,8 +579,8 @@ def parse_args():
                         help='Path to store logs at in production')
     parser.add_argument('--deploy-path', dest='deploy_path',
                         default='.', help='Path to deploy data')
-    parser.add_argument('--no-ldap', action='store_false', default=True,
-                        dest='ldap', help='Open login (no LDAP verification)')
+    parser.add_argument('--auth', choices=Authentication.get_types(),
+                        default='ldap', help='Authentication scheme')
     parser.add_argument('--port', type=int, default=8080,
                         help='Port for the server to listen on')
     parser.add_argument('--daemonize', action='store_true', default=False,
