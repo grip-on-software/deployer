@@ -599,7 +599,7 @@ pre {
 
         # Update Git repository using deploy key
         repository = Git_Repository.from_source(source, deployment["git_path"],
-                                                checkout=True)
+                                                checkout=True, shared=True)
 
         logging.info('Updated repository %s', repository.repo_name)
 
