@@ -535,9 +535,15 @@ pre {
 
         path = deployment.get("bigboat_compose", '')
         files = {}
+        paths = []
         for filename, api_filename in self.FILES:
             full_filename = '{}/{}'.format(path, filename).lstrip('./')
             files[api_filename] = repository.get_contents(full_filename)
+            paths.append(full_filename)
+
+        if not repository.head.diff(repository.prev_head, paths=paths):
+            logging.info('BigBoat compose files were unchanged, skipping.')
+            return
 
         compose = yaml.load(files['bigboatCompose'])
         client = bigboat.Client_v2(deployment["bigboat_url"],
