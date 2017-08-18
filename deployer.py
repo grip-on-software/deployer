@@ -7,6 +7,7 @@ from builtins import object
 import argparse
 from hashlib import md5
 import json
+import logging
 import logging.config
 import os
 import subprocess
@@ -70,14 +71,14 @@ class Deployer(object):
     </body>
 </html>"""
 
-    def __init__(self, args):
+    def __init__(self, args, config):
         self.args = args
-        self.config = Configuration.get_settings()
+        self.config = config
         self.deploy_filename = os.path.join(self.args.deploy_path,
                                             'deployment.json')
 
         auth_type = Authentication.get_type(args.auth)
-        self.authentication = auth_type(args)
+        self.authentication = auth_type(args, config)
 
     def _validate_page(self, page):
         try:
@@ -641,10 +642,15 @@ pre {
 
         return self.COMMON_HTML.format(title='Deploy', content=content)
 
-def parse_args():
+def parse_args(config):
     """
     Parse command line arguments.
     """
+
+    # Default authentication scheme
+    auth = config.get('deploy', 'auth')
+    if not Configuration.has_value(auth):
+        auth = 'ldap'
 
     parser = argparse.ArgumentParser(description='Run deployment WSGI server')
     Log_Setup.add_argument(parser, default='INFO')
@@ -655,7 +661,7 @@ def parse_args():
     parser.add_argument('--deploy-path', dest='deploy_path',
                         default='.', help='Path to deploy data')
     parser.add_argument('--auth', choices=Authentication.get_types(),
-                        default='ldap', help='Authentication scheme')
+                        default=auth, help='Authentication scheme')
     parser.add_argument('--port', type=int, default=8080,
                         help='Port for the server to listen on')
     parser.add_argument('--daemonize', action='store_true', default=False,
@@ -735,7 +741,9 @@ def bootstrap():
     Start the WSGI server.
     """
 
-    args = parse_args()
+    # Setup arguments and deployment-specific configuration
+    config = Configuration.get_settings()
+    args = parse_args(config)
     setup_log(debug=args.debug, log_level=args.log, log_path=args.log_path)
     conf = {
         'global': {
@@ -746,7 +754,9 @@ def bootstrap():
         }
     }
     cherrypy.config.update({'server.socket_port': args.port})
-    cherrypy.tree.mount(Deployer(args), '/deploy', conf)
+
+    # Start the application and server daemon.
+    cherrypy.tree.mount(Deployer(args, config), '/deploy', conf)
     cherrypy.daemon.start(daemonize=args.daemonize, pidfile=args.pidfile,
                           fastcgi=args.fastcgi, scgi=args.scgi, cgi=args.cgi)
 
