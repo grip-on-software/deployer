@@ -515,7 +515,7 @@ pre {
                 # upstream repository's HEAD commit for this branch.
                 revision = branch_build['revision']['SHA1']
                 if not Git_Repository.is_up_to_date(source, revision):
-                    raise ValueError('Git repository HEAD is not {}'.format(revision))
+                    raise ValueError('Latest build is stale compared to Git repository')
 
                 # Retrieve the build job that actually built the master branch.
                 build_number = branch_build['buildNumber']
