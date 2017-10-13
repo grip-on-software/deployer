@@ -487,25 +487,21 @@ pre {
         # Check build stability before deployment based on Jenkins job success.
         jenkins = Jenkins.from_config(self.config)
         job = jenkins.get_job(deployment["jenkins_job"])
-        # Retrieve the latest build job. This may be a build for another
-        # branch, so we check the builds by branch name on this build.
-        # The job may have no builds in which case we cannot check stability.
-        build = job.last_build
-        if not build.exists:
-            raise RuntimeError("Jenkins job or build could not be found")
+        if job.jobs:
+            # Retrieve master branch job of multibranch pipeline job
+            job = job.get_job('master')
 
-        for action in build.data['actions']:
-            if 'buildsByBranchName' in action:
-                # Check if there has been a build for the master branch.
-                if 'origin/master' not in action['buildsByBranchName']:
-                    raise RuntimeError('Master branch build could not be found')
+        # Retrieve the latest branch build job.
+        build = None
+        for branch in ('master', 'origin/master'):
+            build, branch_build = job.get_last_branch_build(branch)
 
+            if build is not None:
                 # Retrieve the branches that were involved in this build.
                 # Branch may be duplicated in case of merge strategies.
                 # We only accept master branch builds if the latest build for
                 # that branch not a merge request build, since the stability of
                 # the master branch code is not demonstrated by this build.
-                branch_build = action['buildsByBranchName']['origin/master']
                 branch_data = branch_build['revision']['branch']
                 branches = set([branch['name'] for branch in branch_data])
                 if len(branches) > 1:
@@ -517,12 +513,10 @@ pre {
                 if not Git_Repository.is_up_to_date(source, revision):
                     raise ValueError('Latest build is stale compared to Git repository')
 
-                # Retrieve the build job that actually built the master branch.
-                build_number = branch_build['buildNumber']
-                if build_number != build.number:
-                    build = job.get_build(build_number)
-
                 break
+
+        if build is None:
+            raise ValueError('Master branch build could not be found')
 
         # Check whether the latest (branch) build is complete and successful.
         if build.building:
