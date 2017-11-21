@@ -4,8 +4,19 @@ Frontend for accessing deployments and (re)starting them.
 
 from past.builtins import basestring
 from builtins import object
+try:
+    from future import standard_library
+    standard_library.install_aliases()
+except ImportError:
+    raise
+
 import argparse
+from collections import OrderedDict
 from hashlib import md5
+try:
+    from itertools import zip_longest
+except ImportError:
+    raise
 import json
 import logging
 import logging.config
@@ -46,7 +57,8 @@ class Deployer(object):
         ("services", "Systemctl service names", list),
         ("bigboat_url", "URL to BigBoat instance", str),
         ("bigboat_key", "API key of BigBoat instance", str),
-        ("bigboat_compose", "Repository path to compose files", str)
+        ("bigboat_compose", "Repository path to compose files", str),
+        ("secret_files", "Secret files to add to deployment", file)
     ]
 
     # Compose files for BigBoat
@@ -76,6 +88,7 @@ class Deployer(object):
         self.config = config
         self.deploy_filename = os.path.join(self.args.deploy_path,
                                             'deployment.json')
+        self._deployments = None
 
         auth_type = Authentication.get_type(args.auth)
         self.authentication = auth_type(args, config)
@@ -126,6 +139,10 @@ body {
     -webkit-box-shadow: 0 2px 3px rgba(10, 10, 10, 0.1), 0 0 0 1px rgba(10, 10, 10, 0.1);
     box-shadow: 0 2px 3px rgba(10, 10, 10, 0.1), 0 0 0 1px rgba(10, 10, 10, 0.1);
     text-align: left;
+}
+form.edit label.file + label {
+    font-size: 90%;
+    padding-left: 1rem;
 }
 form.login {
     max-width: 60%;
@@ -254,10 +271,32 @@ pre {
             page += '?' + params
         raise cherrypy.HTTPRedirect(page)
 
+    @property
+    def deployments(self):
+        """
+        Retrieve the current deployments.
+        """
+
+        if self._deployments is None:
+            self._deployments = self._read()
+
+        return self._deployments
+
+    @deployments.setter
+    def deployments(self, deployments):
+        """
+        Alter the current deployments to a new list of dictionaries, or set the
+        in-memory cache to `None` in order to invalidate it.
+        """
+
+        self._deployments = deployments
+        if deployments is not None:
+            self._write(deployments)
+
     def _read(self):
         if os.path.exists(self.deploy_filename):
             with open(self.deploy_filename) as deploy_file:
-                return json.load(deploy_file)
+                return json.load(deploy_file, object_pairs_hook=OrderedDict)
         else:
             return []
 
@@ -280,9 +319,8 @@ pre {
 
         self._validate_login()
 
-        deployments = self._read()
         content = self._get_session_html()
-        if not deployments:
+        if not self.deployments:
             content += """
             <p>No deployments found - <a href="create">create one</a>
             """
@@ -295,7 +333,7 @@ pre {
                         {status}
                     </li>"""
             items = []
-            for deployment in deployments:
+            for deployment in self.deployments:
                 if self._is_up_to_date(deployment):
                     status = 'Up to date'
                 else:
@@ -313,12 +351,9 @@ pre {
 
         return self.COMMON_HTML.format(title='List', content=content)
 
-    def _find_deployment(self, name, deployments=None):
-        if deployments is None:
-            deployments = self._read()
-
+    def _find_deployment(self, name):
         deployment = None
-        for deployment in deployments:
+        for deployment in self.deployments:
             if deployment["name"] == name:
                 return deployment
 
@@ -333,6 +368,17 @@ pre {
             value = deployment.get(field_name, '')
             input_type = 'text'
             props = ''
+            if issubclass(field_type, file):
+                form += """
+                <label class="file">
+                    {display_name}:
+                    <input type="file" name="{field_name}" multiple>
+                </label>""".format(display_name=display_name,
+                                   field_name=field_name)
+                display_name = 'Names'
+                field_name += '_names'
+                if value != '':
+                    value = ' '.join(value.keys())
             if issubclass(field_type, list):
                 value = ','.join(value)
             elif issubclass(field_type, bool):
@@ -363,20 +409,70 @@ pre {
         }
         update = []
         key_file = os.path.join(self.args.deploy_path, 'key-{}'.format(name))
+        if os.path.exists(key_file):
+            logging.info('Removing old key file %s', key_file)
+            os.remove(key_file)
         key = Key(key_file, data, update, {}, False)
         key.generate()
         return key.keyname
 
-    def _create_deployment(self, name, kwargs, deploy_key=None,
-                           deployments=None):
-        if deployments is None:
-            deployments = self._read()
+    @staticmethod
+    def _upload_file(uploaded_file):
+        block_size = 8192
+        has_data = True
+        data = ''
+        while has_data:
+            chunk = uploaded_file.read(block_size)
+            data += chunk
+            if not chunk:
+                has_data = False
 
-        if any(deployment["name"] == name for deployment in deployments):
+        return data
+
+    @staticmethod
+    def _extract_filename(path):
+        # Compatible filename parsing as per
+        # https://html.spec.whatwg.org/multipage/input.html#fakepath-srsly
+        if path[:12] == 'C:\\fakepath\\':
+            # Modern browser
+            return path[12:]
+
+        index = path.rfind('/')
+        if index >= 0:
+            # Unix-based path
+            return path[index+1:]
+
+        index = path.rfind('\\')
+        if index >= 0:
+            # Windows-based path
+            return path[index+1:]
+
+        # Just the file name
+        return path
+
+    def _upload_files(self, current, new_files):
+        if not isinstance(new_files, list):
+            new_files = [new_files]
+
+        for name, new_file in zip_longest(list(current.keys()), new_files):
+            if new_file is None:
+                break
+            if name is None:
+                name = self._extract_filename(new_file.filename)
+
+            logging.info('Reading uploaded file for name %s', name)
+            data = self._upload_file(new_file.file)
+            current[name] = data
+
+    def _create_deployment(self, name, kwargs, deploy_key=None,
+                           secret_files=None):
+        if any(deployment["name"] == name for deployment in self.deployments):
             raise ValueError("Deployment '{}' already exists".format(name))
 
         if deploy_key is None:
             deploy_key = self._generate_deploy_key(name)
+        if secret_files is not None:
+            self._upload_files(secret_files, kwargs.pop("secret_files", []))
 
         services = kwargs.pop("services", '')
         deployment = {
@@ -389,9 +485,10 @@ pre {
             "bigboat_url": kwargs.pop("bigboat_url", ''),
             "bigboat_key": kwargs.pop("bigboat_key", ''),
             "bigboat_compose": kwargs.pop("bigboat_compose", ''),
+            "secret_files": secret_files
         }
-        deployments.append(deployment)
-        self._write(deployments)
+        self.deployments.append(deployment)
+        self._write(self.deployments)
         with open('{}.pub'.format(deploy_key), 'r') as public_key_file:
             public_key = public_key_file.read()
 
@@ -406,7 +503,8 @@ pre {
         self._validate_login()
 
         if cherrypy.request.method == 'POST':
-            public_key = self._create_deployment(name, kwargs)[1]
+            public_key = self._create_deployment(name, kwargs,
+                                                 secret_files={})[1]
 
             success = """<div class="success">
                 The deployment has been created. The new deploy key's public
@@ -421,12 +519,29 @@ pre {
         content = """
             {session}
             {success}
-            <form class="edit" action="create" method="post">
+            <form class="edit" action="create" method="post" enctype="multipart/form-data">
                 {form}
                 <button>Update</button>
             </form>""".format(session=self._get_session_html(), success=success,
                               form=self._format_fields({}, deploy_key=False))
         return self.COMMON_HTML.format(title='Create', content=content)
+
+    def _check_old_secrets(self, secret_names, old_deployment):
+        old_path = old_deployment.get("git_path", "")
+        old_secrets = old_deployment.get("secret_files", {})
+        if old_secrets.keys() != secret_names:
+            # Remove old files from repository which might never be overwritten
+            for secret_file in old_secrets:
+                secret_path = os.path.join(old_path, secret_file)
+                if os.path.exists(secret_path):
+                    os.remove(secret_path)
+
+        new_secrets = OrderedDict()
+        for secret_name in secret_names:
+            if secret_name in old_secrets:
+                new_secrets[secret_name] = old_secrets[secret_name]
+
+        return new_secrets
 
     @cherrypy.expose
     def edit(self, name=None, old_name=None, **kwargs):
@@ -437,26 +552,29 @@ pre {
 
         self._validate_login()
         if name is None:
-            raise cherrypy.HTTPError(404, "Missing parameter 'name'")
-
-        deployments = self._read()
+            # Paramter 'name' required
+            raise cherrypy.HTTPRedirect('list')
 
         if cherrypy.request.method == 'POST':
-            old_deployment = self._find_deployment(old_name,
-                                                   deployments=deployments)
-            deployments.remove(old_deployment)
+            old_deployment = self._find_deployment(old_name)
+            self.deployments.remove(old_deployment)
             if kwargs.pop("deploy_key"):
+                # Keep the deploy key according to checkbox state
                 deploy_key = old_deployment.get("deploy_key", '')
                 state = 'original'
             else:
+                # Generate a new deploy key
                 deploy_key = None
                 state = 'new'
                 if os.path.exists(old_deployment.get("deploy_key", '')):
                     os.remove(old_deployment.get("deploy_key", ''))
 
+            secret_names = kwargs.pop("secret_files_names", '').split(' ')
+            secret_files = self._check_old_secrets(secret_names, old_deployment)
+
             deployment, public_key = \
                 self._create_deployment(name, kwargs, deploy_key=deploy_key,
-                                        deployments=deployments)
+                                        secret_files=secret_files)
 
             success = """<div class="success">
                 The deployment has been updated. The {state} deploy key's public
@@ -476,7 +594,7 @@ pre {
         content = """
             {session}
             {success}
-            <form class="edit" action="edit" method="post">
+            <form class="edit" action="edit" method="post" enctype="multipart/form-data">
                 {form}
                 <button>Update</button>
             </form>""".format(session=self._get_session_html(), success=success,
@@ -597,6 +715,10 @@ pre {
                                                 checkout=True, shared=True)
 
         logging.info('Updated repository %s', repository.repo_name)
+        for secret_name, secret_file in list(deployment.get("secret_files", {}).items()):
+            secret_path = os.path.join(deployment["git_path"], secret_name)
+            with open(secret_path, 'w') as secret:
+                secret.write(secret_file)
 
         # Restart services
         for service in deployment["services"]:
