@@ -13,6 +13,7 @@ except ImportError:
 import argparse
 from collections import Mapping, MutableSet, OrderedDict
 from hashlib import md5
+from html import escape
 try:
     from itertools import zip_longest
 except ImportError:
@@ -22,6 +23,7 @@ import logging
 import logging.config
 import os
 import shlex
+import string
 import subprocess
 import sys
 import threading
@@ -231,6 +233,20 @@ class Deployment(Mapping):
     def __repr__(self):
         return 'Deployment(name={!r})'.format(self._config["name"])
 
+class Template(string.Formatter):
+    """
+    Formatter object which supports HTML encoding using the 'h' conversion
+    type and URL encoding using the 'u' conversion type.
+    """
+
+    def convert_field(self, value, conversion):
+        if conversion == 'h':
+            return escape(value)
+        if conversion == 'u':
+            return quote(value)
+
+        return super(Template, self).convert_field(value, conversion)
+
 class Deployer(object):
     # pylint: disable=no-self-use
     """
@@ -263,11 +279,11 @@ class Deployer(object):
 <html>
     <head>
         <meta charset="utf-8">
-        <title>{title} - Deployment</title>
+        <title>{title!h} - Deployment</title>
         <link rel="stylesheet" href="css">
     </head>
     <body>
-        <h1>Deployment: {title}</h1>
+        <h1>Deployment: {title!h}</h1>
         <div class="content">
             {content}
         </div>
@@ -281,6 +297,8 @@ class Deployer(object):
                                             'deployment.json')
         self._deployments = None
 
+        self._template = Template()
+
         auth_type = Authentication.get_type(args.auth)
         self.authentication = auth_type(args, config)
 
@@ -288,6 +306,10 @@ class Deployer(object):
         cherrypy.engine.subscribe('stop', self._stop_threads)
         cherrypy.engine.subscribe('graceful', self._stop_threads)
         cherrypy.engine.subscribe('deploy', self._set_deploy_progress)
+
+    def _format_html(self, title='', content=''):
+        return self._template.format(self.COMMON_HTML, title=title,
+                                     content=content)
 
     def _validate_page(self, page):
         try:
@@ -304,8 +326,8 @@ class Deployer(object):
 
         self._validate_page(page)
 
-        form = """
-            <form class="login" method="post" action="login?page={page}&amp;params={params}">
+        form = self._template.format("""
+            <form class="login" method="post" action="login?page={page!u}&amp;params={params!u}">
                 <label>
                     Username: <input type="text" name="username" autofocus>
                 </label>
@@ -313,9 +335,9 @@ class Deployer(object):
                     Password: <input type="password" name="password">
                 </label>
                 <button type="submit">Login</button>
-            </form>""".format(page=page, params=quote(params))
+            </form>""", page=page, params=params)
 
-        return self.COMMON_HTML.format(title='Login', content=form)
+        return self._format_html(title='Login', content=form)
 
     @cherrypy.expose
     def css(self):
@@ -486,12 +508,11 @@ pre {
 
         return self._deployments
 
-    @staticmethod
-    def _get_session_html():
-        return """
+    def _get_session_html(self):
+        return self._template.format("""
             <div class="logout">
-                {user} - <a href="logout">Logout</a>
-            </div>""".format(user=cherrypy.session['authenticated'])
+                {user!h} - <a href="logout">Logout</a>
+            </div>""", user=cherrypy.session['authenticated'])
 
     @cherrypy.expose
     def list(self):
@@ -509,9 +530,9 @@ pre {
         else:
             item = """
                     <li>
-                        {deployment[name]}
-                        <button formaction="deploy" name="name" value="{deployment[name]}" formmethod="post">Deploy</button>
-                        <button formaction="edit" name="name" value="{deployment[name]}">Edit</button>
+                        {deployment[name]!h}
+                        <button formaction="deploy" name="name" value="{deployment[name]!h}" formmethod="post">Deploy</button>
+                        <button formaction="edit" name="name" value="{deployment[name]!h}">Edit</button>
                         {status}
                     </li>"""
             items = []
@@ -522,7 +543,9 @@ pre {
                 else:
                     status = 'Outdated'
 
-                items.append(item.format(deployment=deployment, status=status))
+                items.append(self._template.format(item,
+                                                   deployment=deployment,
+                                                   status=status))
 
             content += """
             <form>
@@ -532,7 +555,7 @@ pre {
                 <p><button formaction="create">Create</button></p>
             </form>""".format(items='\n'.join(items))
 
-        return self.COMMON_HTML.format(title='List', content=content)
+        return self._format_html(title='List', content=content)
 
     def _find_deployment(self, name):
         try:
@@ -546,37 +569,39 @@ pre {
             if field_name in excluded:
                 continue
 
-            value = deployment.get(field_name, '')
-            input_type = 'text'
-            props = ''
+            field = {
+                "display_name": display_name,
+                "field_name": field_name,
+                "input_type": 'text',
+                "value": deployment.get(field_name, ''),
+                "props": ''
+            }
             if issubclass(field_type, file):
-                form += """
+                form += self._template.format("""
                 <label class="file">
-                    {display_name}:
-                    <input type="file" name="{field_name}" multiple>
-                </label>""".format(display_name=display_name,
-                                   field_name=field_name)
-                display_name = 'Names'
-                field_name += '_names'
-                if value != '':
-                    value = ' '.join(value.keys())
+                    {display_name!h}:
+                    <input type="file" name="{field_name!h}" multiple>
+                </label>""", display_name=display_name, field_name=field_name)
+                field["display_name"] = 'Names'
+                field["field_name"] += '_names'
+                if field["value"] != '':
+                    field["value"] = ' '.join(field["value"].keys())
             if issubclass(field_type, list):
-                value = ','.join(value)
+                field["value"] = ','.join(field["value"])
             elif issubclass(field_type, bool):
-                if value != '':
-                    props += ' checked'
+                if field["value"] != '':
+                    field["props"] += ' checked'
 
-                value = '1'
-                input_type = 'checkbox'
+                field.update({
+                    "value": '1',
+                    "input_type": 'checkbox'
+                })
 
-            form += """
+            form += self._template.format("""
                 <label>
-                    {display_name}:
-                    <input type="{input_type}" name="{field_name}" value="{value}"{props}>
-                </label>""".format(display_name=display_name,
-                                   input_type=input_type,
-                                   field_name=field_name,
-                                   value=value, props=props)
+                    {display_name!h}:
+                    <input type="{input_type!h}" name="{field_name!h}" value="{value!h}"{props}>
+                </label>""", **field)
 
         return form
 
@@ -688,13 +713,13 @@ pre {
             public_key = self._create_deployment(name, kwargs,
                                                  secret_files={})[1]
 
-            success = """<div class="success">
+            success = self._template.format("""<div class="success">
                 The deployment has been created. The new deploy key's public
                 part is shown below. Register this key in the GitLab repository.
-                You can <a href="edit?name={name}">edit the deployment</a>,
+                You can <a href="edit?name={name!u}">edit the deployment</a>,
                 <a href="list">go to the list</a> or create a new deployment.
             </div>
-            <pre>{deploy_key}</pre>""".format(name=name, deploy_key=public_key)
+            <pre>{deploy_key!h}</pre>""", name=name, deploy_key=public_key)
         else:
             success = ''
 
@@ -706,7 +731,8 @@ pre {
                 <button>Update</button>
             </form>""".format(session=self._get_session_html(), success=success,
                               form=self._format_fields({}, deploy_key=False))
-        return self.COMMON_HTML.format(title='Create', content=content)
+
+        return self._format_html(title='Create', content=content)
 
     def _check_old_secrets(self, secret_names, old_deployment):
         old_path = old_deployment.get("git_path", "")
@@ -761,19 +787,19 @@ pre {
                 self._create_deployment(name, kwargs, deploy_key=deploy_key,
                                         secret_files=secret_files)
 
-            success = """<div class="success">
-                The deployment has been updated. The {state} deploy key's public
+            success = self._template.format("""<div class="success">
+                The deployment has been updated. The {state!h} deploy key's public
                 part is shown below. Ensure that this key exists in the GitLab
                 repository. You can edit the deployment configuration again or
                 <a href="list">go to the list</a>.
             </div>
-            <pre>{deploy_key}</pre>""".format(state=state,
-                                              deploy_key=public_key)
+            <pre>{deploy_key!h}</pre>""", state=state, deploy_key=public_key)
         else:
             success = ''
             deployment = self._find_deployment(name)
 
-        form = """<input type="hidden" name="old_name" value="{name}">""".format(name=name)
+        form = self._template.format("""
+            <input type="hidden" name="old_name" value="{name!h}">""", name=name)
         form += self._format_fields(deployment)
 
         content = """
@@ -784,7 +810,8 @@ pre {
                 <button>Update</button>
             </form>""".format(session=self._get_session_html(), success=success,
                               form=form)
-        return self.COMMON_HTML.format(title='Edit', content=content)
+
+        return self._format_html(title='Edit', content=content)
 
     def _stop_threads(self, *args, **kwargs):
         # pylint: disable=unused-argument
@@ -818,28 +845,27 @@ pre {
         if cherrypy.request.method != 'POST':
             if name in self._deploy_progress:
                 # Do something
-                content = """
-                    <div class="{state}">
-                        The deployment of {name} is in the "{state}" state.
-                        The latest message is: {message}.
-                        You can <a href="deploy?name={name}">view progress</a>.
+                content = self._template.format("""
+                    <div class="{state!h}">
+                        The deployment of {name!h} is in the "{state}" state.
+                        The latest message is: <code>{message!h}</code>.
+                        You can <a href="deploy?name={name!u}">view progress</a>.
                         You can <a href="list">return to the list</a>.
-                    </div>""".format(name=name, **self._deploy_progress[name])
+                    </div>""", name=name, **self._deploy_progress[name])
 
-                return self.COMMON_HTML.format(title='Deploy',
-                                               content=content)
+                return self._format_html(title='Deploy', content=content)
 
             raise cherrypy.HTTPRedirect('list')
 
         progress = self._deploy_progress.get(name, {'thread': None})
         if progress['thread'] is not None:
-            content = """
+            content = self._template.format("""
                 <div class="error">
-                    Another deployment of {name} is already underway.
-                    You can <a href="deploy?name={name}">view progress</a>.
-                </div>""".format(name=name)
+                    Another deployment of {name!h} is already underway.
+                    You can <a href="deploy?name={name!u}">view progress</a>.
+                </div>""", name=name)
 
-            return self.COMMON_HTML.format(title='Deploy', content=content)
+            return self._format_html(title='Deploy', content=content)
 
         thread = Deploy_Task(deployment, self.config, bus=cherrypy.engine)
         thread.start()
@@ -849,14 +875,14 @@ pre {
             'thread': thread
         }
 
-        content = """
+        content = self._template.format("""
             <div class="success">
                 The deployment of {name} has started.
                 You can <a href="deploy?name={name}">view progress</a>.
                 You can <a href="list">return to the list</a>.
-            </div>""".format(name=name)
+            </div>""", name)
 
-        return self.COMMON_HTML.format(title='Deploy', content=content)
+        return self._format_html(title='Deploy', content=content)
 
 class Thread_Interrupt(Exception):
     """
@@ -961,7 +987,7 @@ class Deploy_Task(threading.Thread):
                     with open(secret_path, 'w') as secret:
                         secret.write(secret_file)
                 except IOError as error:
-                    raise RuntimeError("Could not write secret file {}: {}".format(secret_name, str(error)))
+                    raise RuntimeError("Could not write secret file: {}".format(str(error)))
 
         # Run script
         script = self._deployment.get("script", '')
