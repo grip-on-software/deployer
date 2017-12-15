@@ -285,7 +285,6 @@ class Deployer(object):
         self.authentication = auth_type(args, config)
 
         self._deploy_progress = {}
-        self._deploy_threads = {}
         cherrypy.engine.subscribe('stop', self._stop_threads)
         cherrypy.engine.subscribe('graceful', self._stop_threads)
         cherrypy.engine.subscribe('deploy', self._set_deploy_progress)
@@ -789,21 +788,23 @@ pre {
 
     def _stop_threads(self, *args, **kwargs):
         # pylint: disable=unused-argument
-        for thread in list(self._deploy_threads.values()):
-            thread.stop()
-            if thread.is_alive():
-                thread.join()
+        for progress in list(self._deploy_progress.values()):
+            thread = progress['thread']
+            if thread is not None:
+                thread.stop()
+                if thread.is_alive():
+                    thread.join()
 
-        self._deploy_threads = {}
+        self._deploy_progress = {}
 
     def _set_deploy_progress(self, name, state, message):
         self._deploy_progress[name] = {
             'state': state,
-            'message': message
+            'message': message,
+            'thread': self._deploy_progress[name]['thread']
         }
-        if state in ('success', 'error') and name in self._deploy_threads:
-            del self._deploy_threads[name]
-
+        if state in ('success', 'error'):
+            self._deploy_progress[name]['thread'] = None
 
     @cherrypy.expose
     def deploy(self, name):
@@ -830,7 +831,8 @@ pre {
 
             raise cherrypy.HTTPRedirect('list')
 
-        if name in self._deploy_threads:
+        progress = self._deploy_progress.get(name, {'thread': None})
+        if progress['thread'] is not None:
             content = """
                 <div class="error">
                     Another deployment of {name} is already underway.
@@ -839,13 +841,13 @@ pre {
 
             return self.COMMON_HTML.format(title='Deploy', content=content)
 
+        thread = Deploy_Task(deployment, self.config, bus=cherrypy.engine)
+        thread.start()
         self._deploy_progress[name] = {
             'state': 'starting',
-            'message': 'Thread is starting'
+            'message': 'Thread is starting',
+            'thread': thread
         }
-        self._deploy_threads[name] = Deploy_Task(deployment, self.config,
-                                                 bus=cherrypy.engine)
-        self._deploy_threads[name].start()
 
         content = """
             <div class="success">
