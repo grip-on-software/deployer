@@ -23,6 +23,7 @@ import logging.config
 import os
 import subprocess
 import sys
+import threading
 import bigboat
 import cherrypy
 import cherrypy.daemon
@@ -171,6 +172,52 @@ class Deployment(Mapping):
         return Git_Repository.is_up_to_date(source,
                                             repo.repo.head.commit.hexsha)
 
+    def check_jenkins(self, jenkins):
+        """
+        Check build stability before deployment based on Jenkins job success.
+
+        This raises a `ValueError` if any problem occurs.
+        """
+
+        source = self.get_source()
+        job = jenkins.get_job(self._config["jenkins_job"])
+        if job.jobs:
+            # Retrieve master branch job of multibranch pipeline job
+            job = job.get_job('master')
+
+        # Retrieve the latest branch build job.
+        build = None
+        for branch in ('master', 'origin/master'):
+            build, branch_build = job.get_last_branch_build(branch)
+
+            if build is not None:
+                # Retrieve the branches that were involved in this build.
+                # Branch may be duplicated in case of merge strategies.
+                # We only accept master branch builds if the latest build for
+                # that branch not a merge request build, since the stability of
+                # the master branch code is not demonstrated by this build.
+                branch_data = branch_build['revision']['branch']
+                branches = set([branch['name'] for branch in branch_data])
+                if len(branches) > 1:
+                    raise ValueError('Latest build is caused by merge request')
+
+                # Check whether the revision that was built is actually the
+                # upstream repository's HEAD commit for this branch.
+                revision = branch_build['revision']['SHA1']
+                if not Git_Repository.is_up_to_date(source, revision):
+                    raise ValueError('Latest build is stale compared to Git repository')
+
+                break
+
+        if build is None:
+            raise ValueError('Master branch build could not be found')
+
+        # Check whether the latest (branch) build is complete and successful.
+        if build.building:
+            raise ValueError("Build is not complete")
+        if build.result != "SUCCESS":
+            raise ValueError("Build result was not success, but {}".format(build.result))
+
     def __getitem__(self, item):
         return self._config[item]
 
@@ -234,6 +281,12 @@ class Deployer(object):
 
         auth_type = Authentication.get_type(args.auth)
         self.authentication = auth_type(args, config)
+
+        self._deploy_progress = {}
+        self._deploy_threads = {}
+        cherrypy.engine.subscribe('stop', self._stop_threads)
+        cherrypy.engine.subscribe('graceful', self._stop_threads)
+        cherrypy.engine.subscribe('deploy', self._set_deploy_progress)
 
     def _validate_page(self, page):
         try:
@@ -333,7 +386,7 @@ button a {
 pre {
     overflow-x: auto;
 }
-.success, .error {
+.success, .error, .starting, .progress {
     margin: auto 10rem auto 2rem;
     padding: 1rem 1rem 1rem 1rem;
     border-radius: 1rem;
@@ -347,6 +400,14 @@ pre {
 .error {
     border: 0.01rem solid #ff5555;
     background-color: #ffcccc;
+}
+.starting {
+    border: 0.01rem solid #666666;
+    background-color: #eeeeee;
+}
+.progress {
+    border: 0.01rem solid #5555ff;
+    background-color: #ccccff;
 }
 """
 
@@ -723,108 +784,23 @@ pre {
                               form=form)
         return self.COMMON_HTML.format(title='Edit', content=content)
 
-    def _check_jenkins(self, deployment, source):
-        # Check build stability before deployment based on Jenkins job success.
-        jenkins = Jenkins.from_config(self.config)
-        job = jenkins.get_job(deployment["jenkins_job"])
-        if job.jobs:
-            # Retrieve master branch job of multibranch pipeline job
-            job = job.get_job('master')
+    def _stop_threads(self, *args, **kwargs):
+        # pylint: disable=unused-argument
+        for thread in list(self._deploy_threads.values()):
+            thread.stop()
+            if thread.is_alive():
+                thread.join()
 
-        # Retrieve the latest branch build job.
-        build = None
-        for branch in ('master', 'origin/master'):
-            build, branch_build = job.get_last_branch_build(branch)
+        self._deploy_threads = {}
 
-            if build is not None:
-                # Retrieve the branches that were involved in this build.
-                # Branch may be duplicated in case of merge strategies.
-                # We only accept master branch builds if the latest build for
-                # that branch not a merge request build, since the stability of
-                # the master branch code is not demonstrated by this build.
-                branch_data = branch_build['revision']['branch']
-                branches = set([branch['name'] for branch in branch_data])
-                if len(branches) > 1:
-                    raise ValueError('Latest build is caused by merge request')
+    def _set_deploy_progress(self, name, state, message):
+        self._deploy_progress[name] = {
+            'state': state,
+            'message': message
+        }
+        if state in ('success', 'error') and name in self._deploy_threads:
+            del self._deploy_threads[name]
 
-                # Check whether the revision that was built is actually the
-                # upstream repository's HEAD commit for this branch.
-                revision = branch_build['revision']['SHA1']
-                if not Git_Repository.is_up_to_date(source, revision):
-                    raise ValueError('Latest build is stale compared to Git repository')
-
-                break
-
-        if build is None:
-            raise ValueError('Master branch build could not be found')
-
-        # Check whether the latest (branch) build is complete and successful.
-        if build.building:
-            raise ValueError("Build is not complete")
-        if build.result != "SUCCESS":
-            raise ValueError("Build result was not success, but {}".format(build.result))
-
-    def _update_bigboat(self, deployment, repository):
-        if deployment.get("bigboat_key", '') == '':
-            raise ValueError("BigBoat API key required to update BigBoat")
-
-        path = deployment.get("bigboat_compose", '')
-        files = {}
-        paths = []
-        for filename, api_filename in self.FILES:
-            full_filename = '{}/{}'.format(path, filename).lstrip('./')
-            files[api_filename] = repository.get_contents(full_filename)
-            paths.append(full_filename)
-
-        if not repository.head.diff(repository.prev_head, paths=paths):
-            logging.info('BigBoat compose files were unchanged, skipping.')
-            return
-
-        compose = yaml.load(files['bigboatCompose'])
-        client = bigboat.Client_v2(deployment["bigboat_url"],
-                                   deployment["bigboat_key"])
-
-        name = compose['name']
-        version = compose['version']
-        application = client.get_app(name, version)
-        if application is None:
-            logging.warning('Application %s version %s not on %s, creating.',
-                            name, version, deployment['bigboat_url'])
-            if client.update_app(name, version) is None:
-                raise RuntimeError('Cannot register application')
-
-        for api_filename, contents in files.items():
-            if not client.update_compose(name, version, api_filename, contents):
-                raise RuntimeError('Cannot update compose file')
-
-        client.update_instance(name, name, version)
-
-    def _deploy(self, name):
-        deployment = self._find_deployment(name)
-        source = deployment.get_source()
-
-        # Check Jenkins job success
-        if deployment.get("jenkins_job", '') != '':
-            self._check_jenkins(deployment, source)
-
-        # Update Git repository using deploy key
-        repository = Git_Repository.from_source(source, deployment["git_path"],
-                                                checkout=True, shared=True)
-
-        logging.info('Updated repository %s', repository.repo_name)
-        for secret_name, secret_file in list(deployment.get("secret_files", {}).items()):
-            secret_path = os.path.join(deployment["git_path"], secret_name)
-            with open(secret_path, 'w') as secret:
-                secret.write(secret_file)
-
-        # Restart services
-        for service in deployment["services"]:
-            if service != '':
-                subprocess.check_call(['sudo', 'systemctl', 'restart', service])
-
-        # Update BigBoat dashboard applications
-        if deployment.get("bigboat_url", '') != '':
-            self._update_bigboat(deployment, repository)
 
     @cherrypy.expose
     def deploy(self, name):
@@ -833,27 +809,165 @@ pre {
         """
 
         self._validate_login()
+        deployment = self._find_deployment(name)
 
         if cherrypy.request.method != 'POST':
+            if name in self._deploy_progress:
+                # Do something
+                content = """
+                    <div class="{state}">
+                        The deployment of {name} is in the "{state}" state.
+                        The latest message is: {message}.
+                        You can <a href="deploy?name={name}">view progress</a>.
+                        You can <a href="list">return to the list</a>.
+                    </div>""".format(name=name, **self._deploy_progress[name])
+
+                return self.COMMON_HTML.format(title='Deploy',
+                                               content=content)
+
             raise cherrypy.HTTPRedirect('list')
 
-        try:
-            self._deploy(name)
-        except (RuntimeError, ValueError) as error:
+        if name in self._deploy_threads:
             content = """
                 <div class="error">
-                    The deployment of {name} could not be updated completely.
-                    The following error occurred: {error}.
-                    You can <a href="list">return to the list</a>.
-                </div>""".format(name=name, error=str(error))
-        else:
-            content = """
-                <div class="success">
-                    The deployment of {name} has been updated.
-                    You can <a href="list">return to the list</a>.
+                    Another deployment of {name} is already underway.
+                    You can <a href="deploy?name={name}">view progress</a>.
                 </div>""".format(name=name)
 
+            return self.COMMON_HTML.format(title='Deploy', content=content)
+
+        self._deploy_progress[name] = {
+            'state': 'starting',
+            'message': 'Thread is starting'
+        }
+        self._deploy_threads[name] = Deploy_Task(deployment, self.config,
+                                                 bus=cherrypy.engine)
+        self._deploy_threads[name].start()
+
+        content = """
+            <div class="success">
+                The deployment of {name} has started.
+                You can <a href="deploy?name={name}">view progress</a>.
+                You can <a href="list">return to the list</a>.
+            </div>""".format(name=name)
+
         return self.COMMON_HTML.format(title='Deploy', content=content)
+
+class Thread_Interrupt(Exception):
+    """
+    Exception indicating that the thread is stopped from an external source.
+    """
+
+class Deploy_Task(threading.Thread):
+    """
+    Background task to update a deployment.
+    """
+
+    def __init__(self, deployment, config, bus=None):
+        super(Deploy_Task, self).__init__()
+        self._deployment = deployment
+        self._name = deployment["name"]
+        self._config = config
+        self._bus = bus
+        self._stop = False
+
+    def run(self):
+        try:
+            self._deploy()
+        except (KeyboardInterrupt, SystemExit, Thread_Interrupt):
+            pass
+        except (RuntimeError, ValueError) as error:
+            self._publish('error', str(error))
+
+    def stop(self):
+        """
+        Indicate that the thread should stop.
+        """
+
+        self._stop = True
+
+    def _publish(self, state, message):
+        if self._stop:
+            raise Thread_Interrupt("Thread is stopped")
+
+        logging.info('Deploy %s: %s: %s', self._name, state, message)
+        if self._bus is not None:
+            self._bus.publish('deploy', self._name, state, message)
+
+    def _update_bigboat(self, repository):
+        if self._deployment.get("bigboat_key", '') == '':
+            raise ValueError("BigBoat API key required to update BigBoat")
+
+        path = self._deployment.get("bigboat_compose", '')
+        files = {}
+        paths = []
+        for filename, api_filename in self.FILES:
+            full_filename = '{}/{}'.format(path, filename).lstrip('./')
+            files[api_filename] = repository.get_contents(full_filename)
+            paths.append(full_filename)
+
+        if not repository.head.diff(repository.prev_head, paths=paths):
+            self._publish('progress',
+                          'BigBoat compose files were unchanged, skipping.')
+            return
+
+        self._publish('progress', 'Updating BigBoat compose files')
+        compose = yaml.load(files['bigboatCompose'])
+        client = bigboat.Client_v2(self._deployment["bigboat_url"],
+                                   self._deployment["bigboat_key"])
+
+        name = compose['name']
+        version = compose['version']
+        application = client.get_app(name, version)
+        if application is None:
+            logging.warning('Application %s version %s not on %s, creating.',
+                            name, version, self._deployment['bigboat_url'])
+            if client.update_app(name, version) is None:
+                raise RuntimeError('Cannot register application')
+
+        for api_filename, contents in files.items():
+            if not client.update_compose(name, version, api_filename, contents):
+                raise RuntimeError('Cannot update compose file')
+
+        self._publish('progress', 'Updating BigBoat instances')
+        client.update_instance(name, name, version)
+
+    def _deploy(self):
+        # Check Jenkins job success
+        if self._deployment.get("jenkins_job", '') != '':
+            jenkins = Jenkins.from_config(self._config)
+            self._publish('progress', 'Checking Jenkins build state')
+            self._deployment.check_jenkins(jenkins)
+
+        # Update Git repository using deploy key
+        self._publish('progress', 'Updating Git repository')
+        source = self._deployment.get_source()
+        git_path = self._deployment["git_path"]
+        repository = Git_Repository.from_source(source, git_path,
+                                                checkout=True, shared=True)
+
+        logging.info('Updated repository %s', repository.repo_name)
+        self._publish('progress', 'Writing secret files')
+        secret_files = self._deployment.get("secret_files", {})
+        for secret_name, secret_file in list(secret_files.items()):
+            secret_path = os.path.join(git_path, secret_name)
+            with open(secret_path, 'w') as secret:
+                secret.write(secret_file)
+
+        # Restart services
+        for service in self._deployment["services"]:
+            if service != '':
+                self._publish('progress',
+                              'Restarting service {}'.format(service))
+                subprocess.check_call([
+                    'sudo', 'systemctl', 'restart', service
+                ])
+
+        # Update BigBoat dashboard applications
+        if self._deployment.get("bigboat_url", '') != '':
+            self._update_bigboat(repository)
+
+        self._publish('success', 'Finished deployment')
 
 def parse_args(config):
     """
