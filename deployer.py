@@ -3,7 +3,7 @@ Frontend for accessing deployments and (re)starting them.
 """
 
 from past.builtins import basestring
-from builtins import object
+from builtins import str, object
 try:
     from future import standard_library
     standard_library.install_aliases()
@@ -11,7 +11,7 @@ except ImportError:
     raise
 
 import argparse
-from collections import OrderedDict
+from collections import Mapping, MutableSet, OrderedDict
 from hashlib import md5
 try:
     from itertools import zip_longest
@@ -40,6 +40,148 @@ from gatherer.domain import Source
 from gatherer.git import Git_Repository
 from gatherer.jenkins import Jenkins
 from gatherer.log import Log_Setup
+
+class Deployments(MutableSet):
+    """
+    A set of deployments.
+    """
+
+    def __init__(self, deployments):
+        # pylint: disable=super-init-not-called
+        self._deployments = {}
+        for config in deployments:
+            self.add(config)
+
+    @classmethod
+    def read(cls, filename):
+        """
+        Read a deployments collection from a JSON file.
+        """
+
+        if os.path.exists(filename):
+            with open(filename) as deploy_file:
+                return cls(json.load(deploy_file,
+                                     object_pairs_hook=OrderedDict))
+        else:
+            return cls([])
+
+    def write(self, filename):
+        """
+        Write the deployments to a JSON file.
+        """
+
+        with open(filename, 'w') as deploy_file:
+            json.dump([
+                dict(deployment) for deployment in self._deployments.values()
+            ], deploy_file)
+
+    @staticmethod
+    def _convert(data):
+        if isinstance(data, Deployment):
+            return data
+
+        if isinstance(data, dict):
+            return Deployment(**data)
+
+        return Deployment(name=data)
+
+    def __contains__(self, value):
+        deployment = self._convert(value)
+        return deployment["name"] in self._deployments
+
+    def __iter__(self):
+        return iter(self._deployments.values())
+
+    def __len__(self):
+        return len(self._deployments)
+
+    def get(self, value):
+        """
+        Retrieve a Deployment object stored in this set based on the name of
+        the deployment or a (partial) Deployment object or dict containing at
+        least the "name" key.
+
+        Raises a `KeyError` if the deployment is not found.
+        """
+
+        deployment = self._convert(value)
+        name = deployment["name"]
+        return self._deployments[name]
+
+    def add(self, value):
+        deployment = self._convert(value)
+        name = deployment["name"]
+        if name in self._deployments:
+            # Ignore duplicate deployments
+            return
+
+        self._deployments[name] = deployment
+
+    def discard(self, value):
+        deployment = self._convert(value)
+        name = deployment["name"]
+        if name not in self._deployments:
+            return
+
+        del self._deployments[name]
+
+    def __repr__(self):
+        return 'Deployments({!r})'.format(list(self._deployments.values()))
+
+class Deployment(Mapping):
+    """
+    A single deployment configuration.
+    """
+
+    def __init__(self, **config):
+        # pylint: disable=super-init-not-called
+        self._config = config
+
+    def get_source(self):
+        """
+        Retrieve a Source object describing the version control system of
+        this deployment's source code origin.
+        """
+
+        if "git_url" not in self._config:
+            raise ValueError("Cannot retrieve Git repository: misconfiguration")
+
+        # Describe Git source repository
+        source = Source.from_type('git', name=self._config["name"],
+                                  url=self._config["git_url"])
+        source.credentials_path = self._config["deploy_key"]
+
+        return source
+
+    def is_up_to_date(self):
+        """
+        Check whether the deployment's local checkout is up to date compared
+        to the upstream version.
+        """
+
+        try:
+            source = self.get_source()
+        except ValueError:
+            return False
+
+        repo = Git_Repository(source, self._config["git_path"])
+        if not repo.exists():
+            return False
+
+        return Git_Repository.is_up_to_date(source,
+                                            repo.repo.head.commit.hexsha)
+
+    def __getitem__(self, item):
+        return self._config[item]
+
+    def __iter__(self):
+        return iter(self._config)
+
+    def __len__(self):
+        return len(self._config)
+
+    def __repr__(self):
+        return 'Deployment(name={!r})'.format(self._config["name"])
 
 class Deployer(object):
     # pylint: disable=no-self-use
@@ -278,31 +420,9 @@ pre {
         """
 
         if self._deployments is None:
-            self._deployments = self._read()
+            self._deployments = Deployments.read(self.deploy_filename)
 
         return self._deployments
-
-    @deployments.setter
-    def deployments(self, deployments):
-        """
-        Alter the current deployments to a new list of dictionaries, or set the
-        in-memory cache to `None` in order to invalidate it.
-        """
-
-        self._deployments = deployments
-        if deployments is not None:
-            self._write(deployments)
-
-    def _read(self):
-        if os.path.exists(self.deploy_filename):
-            with open(self.deploy_filename) as deploy_file:
-                return json.load(deploy_file, object_pairs_hook=OrderedDict)
-        else:
-            return []
-
-    def _write(self, deployments):
-        with open(self.deploy_filename, 'w') as deploy_file:
-            json.dump(deployments, deploy_file)
 
     @staticmethod
     def _get_session_html():
@@ -333,8 +453,9 @@ pre {
                         {status}
                     </li>"""
             items = []
-            for deployment in self.deployments:
-                if self._is_up_to_date(deployment):
+            for deployment in sorted(self.deployments,
+                                     key=lambda deployment: deployment["name"]):
+                if deployment.is_up_to_date():
                     status = 'Up to date'
                 else:
                     status = 'Outdated'
@@ -352,12 +473,10 @@ pre {
         return self.COMMON_HTML.format(title='List', content=content)
 
     def _find_deployment(self, name):
-        deployment = None
-        for deployment in self.deployments:
-            if deployment["name"] == name:
-                return deployment
-
-        raise cherrypy.HTTPError(404, 'Deployment {} does not exist'.format(name))
+        try:
+            return self.deployments.get(name)
+        except KeyError:
+            raise cherrypy.HTTPError(404, 'Deployment {} does not exist'.format(name))
 
     def _format_fields(self, deployment, **excluded):
         form = ''
@@ -466,7 +585,7 @@ pre {
 
     def _create_deployment(self, name, kwargs, deploy_key=None,
                            secret_files=None):
-        if any(deployment["name"] == name for deployment in self.deployments):
+        if name in self.deployments:
             raise ValueError("Deployment '{}' already exists".format(name))
 
         if deploy_key is None:
@@ -487,8 +606,8 @@ pre {
             "bigboat_compose": kwargs.pop("bigboat_compose", ''),
             "secret_files": secret_files
         }
-        self.deployments.append(deployment)
-        self._write(self.deployments)
+        self.deployments.add(deployment)
+        self.deployments.write(self.deploy_filename)
         with open('{}.pub'.format(deploy_key), 'r') as public_key_file:
             public_key = public_key_file.read()
 
@@ -680,34 +799,9 @@ pre {
 
         client.update_instance(name, name, version)
 
-    def _is_up_to_date(self, deployment):
-        try:
-            source = self._get_source(deployment["name"], deployment)
-        except ValueError:
-            return False
-
-        repo = Git_Repository(source, deployment["git_path"])
-        if not repo.exists():
-            return False
-
-        return Git_Repository.is_up_to_date(source, repo.repo.head.commit.hexsha)
-
-    def _get_source(self, name, deployment=None):
-        if deployment is None:
-            deployment = self._find_deployment(name)
-
-        if "git_url" not in deployment:
-            raise ValueError("Cannot retrieve Git repository: misconfiguration")
-
-        # Describe Git source repository
-        source = Source.from_type('git', name=name, url=deployment["git_url"])
-        source.credentials_path = deployment["deploy_key"]
-
-        return source
-
     def _deploy(self, name):
         deployment = self._find_deployment(name)
-        source = self._get_source(name, deployment)
+        source = deployment.get_source()
 
         # Check Jenkins job success
         if deployment.get("jenkins_job", '') != '':
