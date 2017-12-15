@@ -455,7 +455,7 @@ pre {
             new_files = [new_files]
 
         for name, new_file in zip_longest(list(current.keys()), new_files):
-            if new_file is None:
+            if new_file is None or new_file.file is None:
                 break
             if name is None:
                 name = self._extract_filename(new_file.filename)
@@ -529,7 +529,8 @@ pre {
     def _check_old_secrets(self, secret_names, old_deployment):
         old_path = old_deployment.get("git_path", "")
         old_secrets = old_deployment.get("secret_files", {})
-        if old_secrets.keys() != secret_names:
+        old_names = list(old_secrets.keys())
+        if old_names != secret_names:
             # Remove old files from repository which might never be overwritten
             for secret_file in old_secrets:
                 secret_path = os.path.join(old_path, secret_file)
@@ -537,9 +538,11 @@ pre {
                     os.remove(secret_path)
 
         new_secrets = OrderedDict()
-        for secret_name in secret_names:
-            if secret_name in old_secrets:
-                new_secrets[secret_name] = old_secrets[secret_name]
+        for new_name, old_name in zip_longest(secret_names, old_names):
+            if old_name is None:
+                new_secrets[new_name] = ''
+            elif new_name is not None:
+                new_secrets[new_name] = old_secrets[old_name]
 
         return new_secrets
 
