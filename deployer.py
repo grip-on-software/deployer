@@ -21,6 +21,7 @@ import json
 import logging
 import logging.config
 import os
+import shlex
 import subprocess
 import sys
 import threading
@@ -243,6 +244,7 @@ class Deployer(object):
         ("git_url", "Git repository URL", str),
         ("jenkins_job", "Jenkins job", str),
         ("deploy_key", "Keep deploy key", bool),
+        ("script", "Install command", str),
         ("services", "Systemctl service names", list),
         ("bigboat_url", "URL to BigBoat instance", str),
         ("bigboat_key", "API key of BigBoat instance", str),
@@ -661,6 +663,7 @@ pre {
             "git_url": kwargs.pop("git_url", ''),
             "deploy_key": deploy_key,
             "jenkins_job": kwargs.pop("jenkins_job", ''),
+            "script": kwargs.pop("script", ''),
             "services": services.split(',') if services != '' else [],
             "bigboat_url": kwargs.pop("bigboat_url", ''),
             "bigboat_key": kwargs.pop("bigboat_key", ''),
@@ -950,18 +953,36 @@ class Deploy_Task(threading.Thread):
         self._publish('progress', 'Writing secret files')
         secret_files = self._deployment.get("secret_files", {})
         for secret_name, secret_file in list(secret_files.items()):
-            secret_path = os.path.join(git_path, secret_name)
-            with open(secret_path, 'w') as secret:
-                secret.write(secret_file)
+            if secret_name != '':
+                secret_path = os.path.join(git_path, secret_name)
+                try:
+                    with open(secret_path, 'w') as secret:
+                        secret.write(secret_file)
+                except IOError as error:
+                    raise RuntimeError("Could not write secret file {}: {}".format(secret_name, str(error)))
+
+        # Run script
+        script = self._deployment.get("script", '')
+        if script != '':
+            try:
+                subprocess.check_output(shlex.split(script),
+                                        stderr=subprocess.STDOUT,
+                                        cwd=git_path,
+                                        env={'DEPLOYMENT_NAME': self._name})
+            except subprocess.CalledProcessError as error:
+                raise RuntimeError('Could not run script {}: {}'.format(script, error.output))
 
         # Restart services
         for service in self._deployment["services"]:
             if service != '':
                 self._publish('progress',
                               'Restarting service {}'.format(service))
-                subprocess.check_call([
-                    'sudo', 'systemctl', 'restart', service
-                ])
+                try:
+                    subprocess.check_call([
+                        'sudo', 'systemctl', 'restart', service
+                    ])
+                except subprocess.CalledProcessError:
+                    raise RuntimeError('Could not restart service {}'.format(service))
 
         # Update BigBoat dashboard applications
         if self._deployment.get("bigboat_url", '') != '':
