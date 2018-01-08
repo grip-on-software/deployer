@@ -121,10 +121,13 @@ class Deploy_Task(threading.Thread):
         script = self._deployment.get("script", '')
         if script != '':
             try:
+                self._publish('progress', 'Runnning script {}'.format(script))
+                environment = os.environ.copy()
+                environment['DEPLOYMENT_NAME'] = self._name
                 subprocess.check_output(shlex.split(script),
                                         stderr=subprocess.STDOUT,
                                         cwd=git_path,
-                                        env={'DEPLOYMENT_NAME': self._name})
+                                        env=environment)
             except subprocess.CalledProcessError as error:
                 raise RuntimeError('Could not run script {}: {}'.format(script, error.output))
 
