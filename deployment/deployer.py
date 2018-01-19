@@ -2,8 +2,6 @@
 Frontend for accessing deployments and (re)starting them.
 """
 
-from past.builtins import basestring
-from builtins import str, object
 try:
     from future import standard_library
     standard_library.install_aliases()
@@ -21,20 +19,18 @@ import logging.config
 import os
 import sys
 import cherrypy
-import cherrypy.daemon
-from requests.utils import quote
 try:
     from mock import MagicMock
     sys.modules['abraxas'] = MagicMock()
     from sshdeploy.key import Key
 except ImportError:
     raise
-from gatherer.authentication import LoginException, Authentication
+from server.application import Authenticated_Application
+from server.template import Template
 from .deployment import Deployments
 from .task import Deploy_Task
-from .template import Template
 
-class Deployer(object):
+class Deployer(Authenticated_Application):
     # pylint: disable=no-self-use
     """
     Deployer web interface.
@@ -78,6 +74,8 @@ class Deployer(object):
 </html>"""
 
     def __init__(self, args, config):
+        super(Deployer, self).__init__(args, config)
+
         self.args = args
         self.config = config
         self.deploy_filename = os.path.join(self.args.deploy_path,
@@ -85,9 +83,6 @@ class Deployer(object):
         self._deployments = None
 
         self._template = Template()
-
-        auth_type = Authentication.get_type(args.auth)
-        self.authentication = auth_type(args, config)
 
         self._deploy_progress = {}
         cherrypy.engine.subscribe('stop', self._stop_threads)
@@ -98,20 +93,13 @@ class Deployer(object):
         return self._template.format(self.COMMON_HTML, title=title,
                                      content=content)
 
-    def _validate_page(self, page):
-        try:
-            getattr(self, page).exposed
-        except AttributeError:
-            # Invalid method or not exposed
-            raise cherrypy.HTTPError(400, 'Page must be valid')
-
     @cherrypy.expose
     def index(self, page='list', params=''):
         """
         Login page.
         """
 
-        self._validate_page(page)
+        self.validate_page(page)
 
         form = self._template.format("""
             <form class="login" method="post" action="login?page={page!u}&amp;params={params!u}">
@@ -228,62 +216,6 @@ pre {
 
         return content
 
-    @cherrypy.expose
-    def logout(self):
-        """
-        Log out the user.
-        """
-
-        cherrypy.session.pop('authenticated', None)
-        cherrypy.lib.sessions.expire()
-
-        raise cherrypy.HTTPRedirect('index')
-
-    def _validate_login(self, username=None, password=None, page=None,
-                        params=None):
-        if page is None:
-            page = cherrypy.request.path_info.strip('/')
-
-        if params is None:
-            params = quote(cherrypy.request.query_string)
-
-        redirect = 'index?page={}'.format(page)
-        if params != '' and page != '':
-            redirect += '&params={}'.format(params)
-
-        if username is not None or password is not None:
-            if cherrypy.request.method == 'POST':
-                try:
-                    result = self.authentication.validate(username, password)
-                    logging.info('Authenticated as %s', username)
-                    if isinstance(result, basestring):
-                        cherrypy.session['authenticated'] = result
-                    else:
-                        cherrypy.session['authenticated'] = username
-                except LoginException as error:
-                    logging.info(str(error))
-                    raise cherrypy.HTTPRedirect(redirect)
-            else:
-                raise cherrypy.HTTPError(400, 'POST only allowed for username and password')
-
-        if 'authenticated' not in cherrypy.session:
-            logging.info('No credentials or session found')
-            raise cherrypy.HTTPRedirect(redirect)
-
-    @cherrypy.expose
-    def login(self, username=None, password=None, page='list', params=''):
-        """
-        Log in the user.
-        """
-
-        self._validate_page(page)
-        self._validate_login(username=username, password=password, page=page,
-                             params=params)
-
-        if params != '':
-            page += '?' + params
-        raise cherrypy.HTTPRedirect(page)
-
     @property
     def deployments(self):
         """
@@ -307,7 +239,7 @@ pre {
         List deployments.
         """
 
-        self._validate_login()
+        self.validate_login()
 
         content = self._get_session_html()
         if not self.deployments:
@@ -494,7 +426,7 @@ pre {
         Create a new deployment using a form or handle the form submission.
         """
 
-        self._validate_login()
+        self.validate_login()
 
         if cherrypy.request.method == 'POST':
             public_key = self._create_deployment(name, kwargs,
@@ -548,7 +480,7 @@ pre {
         handle the form submission to update the deployment.
         """
 
-        self._validate_login()
+        self.validate_login()
         if name is None:
             # Paramter 'name' required
             raise cherrypy.HTTPRedirect('list')
@@ -626,7 +558,7 @@ pre {
         Update the deployment based on the configuration.
         """
 
-        self._validate_login()
+        self.validate_login()
         deployment = self._find_deployment(name)
 
         if cherrypy.request.method != 'POST':
