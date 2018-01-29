@@ -259,8 +259,14 @@ pre {
                                      key=lambda deployment: deployment["name"]):
                 if deployment.is_up_to_date():
                     status = 'Up to date'
+                    url = deployment.get_tree_url()
                 else:
                     status = 'Outdated'
+                    url = deployment.get_compare_url()
+
+                if url is not None:
+                    status = self._template.format('<a href="{url!h}">{status}</a>',
+                                                   url=url, status=status)
 
                 items.append(self._template.format(item,
                                                    deployment=deployment,
