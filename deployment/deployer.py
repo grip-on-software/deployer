@@ -587,12 +587,12 @@ pre {
             return self._format_html(title='Deploy', content=content)
 
         thread = Deploy_Task(deployment, self.config, bus=cherrypy.engine)
-        thread.start()
         self._deploy_progress[name] = {
             'state': 'starting',
             'message': 'Thread is starting',
             'thread': thread
         }
+        thread.start()
 
         content = self._template.format("""
             <div class="success">
