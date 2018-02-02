@@ -7,6 +7,7 @@ import json
 import os.path
 from gatherer.domain import Source
 from gatherer.git import Git_Repository
+from gatherer.version_control.repo import RepositorySourceException
 
 class Deployments(MutableSet):
     """
@@ -135,8 +136,11 @@ class Deployment(Mapping):
         if not repo.exists():
             return False
 
-        return Git_Repository.is_up_to_date(source,
-                                            repo.repo.head.commit.hexsha)
+        try:
+            return Git_Repository.is_up_to_date(source,
+                                                repo.repo.head.commit.hexsha)
+        except RepositorySourceException:
+            return False
 
     def check_jenkins(self, jenkins):
         """
