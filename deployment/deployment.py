@@ -6,8 +6,8 @@ from collections import Mapping, MutableSet, OrderedDict
 import json
 import os.path
 from gatherer.domain import Source
-from gatherer.git import Git_Repository
 from gatherer.version_control.repo import RepositorySourceException
+from gatherer.version_control.review import Review_System
 
 class Deployments(MutableSet):
     """
@@ -121,24 +121,61 @@ class Deployment(Mapping):
 
         return source
 
+    def _get_latest_source_version(self):
+        try:
+            source = self.get_source()
+        except ValueError:
+            return None, None
+
+        if source.repository_class is None:
+            return None, None
+
+        repo = source.repository_class(source, self._config["git_path"])
+        if not repo.exists():
+            return source, None
+
+        return source, repo.repo.head.commit.hexsha
+
+    def get_compare_url(self):
+        """
+        Retrieve a URL to a human-readable comparison page for the changes since
+        the latest version.
+        """
+
+        source, latest_version = self._get_latest_source_version()
+        if latest_version is None:
+            return None
+        if not issubclass(source.repository_class, Review_System):
+            return None
+
+        return source.repository_class.get_compare_url(source, latest_version)
+
+    def get_tree_url(self):
+        """
+        Retrieve a URL to a human-readable page showing the state of the
+        repository at the latest version.
+        """
+
+        source, latest_version = self._get_latest_source_version()
+        if latest_version is None:
+            return None
+        if not issubclass(source.repository_class, Review_System):
+            return None
+
+        return source.repository_class.get_tree_url(source, latest_version)
+
     def is_up_to_date(self):
         """
         Check whether the deployment's local checkout is up to date compared
         to the upstream version.
         """
 
-        try:
-            source = self.get_source()
-        except ValueError:
-            return False
-
-        repo = Git_Repository(source, self._config["git_path"])
-        if not repo.exists():
+        source, latest_version = self._get_latest_source_version()
+        if latest_version is None:
             return False
 
         try:
-            return Git_Repository.is_up_to_date(source,
-                                                repo.repo.head.commit.hexsha)
+            return source.repository_class.is_up_to_date(source, latest_version)
         except RepositorySourceException:
             return False
 
@@ -174,7 +211,7 @@ class Deployment(Mapping):
                 # Check whether the revision that was built is actually the
                 # upstream repository's HEAD commit for this branch.
                 revision = branch_build['revision']['SHA1']
-                if not Git_Repository.is_up_to_date(source, revision):
+                if not source.repository_class.is_up_to_date(source, revision):
                     raise ValueError('Latest build is stale compared to Git repository')
 
                 break
