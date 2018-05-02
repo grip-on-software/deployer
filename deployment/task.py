@@ -53,6 +53,37 @@ class Deploy_Task(threading.Thread):
         if self._bus is not None:
             self._bus.publish('deploy', self._name, state, message)
 
+    def _add_artifacts(self, repo_path, last_build):
+        if 'artifacts' not in last_build.data or not last_build.data['artifacts']:
+            raise RuntimeError('Jenkins build has no artifacts')
+
+        self._publish('progress', 'Collecting artifacts')
+        session = last_build.instance.session
+        for artifact in last_build.data['artifacts']:
+            path = artifact['relativePath']
+            self._publish('progress', 'Collecting artifact {}'.format(path))
+
+            dirname = os.path.join(repo_path, os.path.dirname(path))
+            if not os.path.exists(dirname):
+                os.makedirs(dirname)
+
+            url = '{}/artifact/{}'.format(last_build.base_url, path)
+            request = session.get(url)
+            with open(os.path.join(repo_path, path), 'wb') as repo_file:
+                repo_file.write(request.content)
+
+    def _add_secret_files(self, deploy_path):
+        self._publish('progress', 'Writing secret files')
+        secret_files = self._deployment.get("secret_files", {})
+        for secret_name, secret_file in list(secret_files.items()):
+            if secret_name != '':
+                secret_path = os.path.join(deploy_path, secret_name)
+                try:
+                    with open(secret_path, 'w') as secret:
+                        secret.write(secret_file)
+                except IOError as error:
+                    raise RuntimeError("Could not write secret file: {}".format(str(error)))
+
     def _update_bigboat(self, repository):
         if self._deployment.get("bigboat_key", '') == '':
             raise ValueError("BigBoat API key required to update BigBoat")
@@ -96,7 +127,9 @@ class Deploy_Task(threading.Thread):
         if self._deployment.get("jenkins_job", '') != '':
             jenkins = Jenkins.from_config(self._config)
             self._publish('progress', 'Checking Jenkins build state')
-            self._deployment.check_jenkins(jenkins)
+            last_build = self._deployment.check_jenkins(jenkins)
+        else:
+            last_build = None
 
         # Update Git repository using deploy key
         self._publish('progress', 'Updating Git repository')
@@ -106,16 +139,11 @@ class Deploy_Task(threading.Thread):
                                                 checkout=True, shared=True)
 
         logging.info('Updated repository %s', repository.repo_name)
-        self._publish('progress', 'Writing secret files')
-        secret_files = self._deployment.get("secret_files", {})
-        for secret_name, secret_file in list(secret_files.items()):
-            if secret_name != '':
-                secret_path = os.path.join(git_path, secret_name)
-                try:
-                    with open(secret_path, 'w') as secret:
-                        secret.write(secret_file)
-                except IOError as error:
-                    raise RuntimeError("Could not write secret file: {}".format(str(error)))
+
+        if last_build is not None and self._deployment.get("artifacts", False):
+            self._add_artifacts(git_path, last_build)
+
+        self._add_secret_files(git_path)
 
         # Run script
         script = self._deployment.get("script", '')

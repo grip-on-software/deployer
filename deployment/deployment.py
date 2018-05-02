@@ -183,7 +183,8 @@ class Deployment(Mapping):
         """
         Check build stability before deployment based on Jenkins job success.
 
-        This raises a `ValueError` if any problem occurs.
+        This raises a `ValueError` if any problem occurs. Otherwise, the latest
+        build for the master branch is returned.
         """
 
         source = self.get_source()
@@ -224,6 +225,8 @@ class Deployment(Mapping):
             raise ValueError("Build is not complete")
         if build.result != "SUCCESS":
             raise ValueError("Build result was not success, but {}".format(build.result))
+
+        return build
 
     def __getitem__(self, item):
         return self._config[item]
