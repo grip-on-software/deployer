@@ -1,0 +1,20 @@
+[Unit]
+Description=GROS deployment service
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/virtualenv.sh /usr/local/envs/controller /usr/local/bin/deployer.py --scgi --port 8115 --daemonize --pidfile /var/log/deployer/deployer.pid --log-path /var/log/deployer --deploy-path /var/local/deployer/ --log DEBUG
+ExecReload=/bin/kill -s HUP $MAINPID
+WorkingDirectory=/srv/data-gathering
+KillSignal=SIGTERM
+KillMode=process
+TimeoutStopSec=5
+PIDFile=/var/log/deployer/deployer.pid
+User=deployer
+Group=deployer
+Restart=always
+RestartSec=30s
+
+[Install]
+WantedBy=multi-user.target
