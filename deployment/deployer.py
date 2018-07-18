@@ -470,11 +470,14 @@ pre {
             # Remove old files from repository which might never be overwritten
             for secret_file in old_secrets:
                 secret_path = os.path.join(old_path, secret_file)
-                if os.path.exists(secret_path):
+                if os.path.isfile(secret_path):
                     os.remove(secret_path)
 
         new_secrets = OrderedDict()
         for new_name, old_name in zip_longest(secret_names, old_names):
+            if new_name == '':
+                continue
+
             if old_name is None:
                 new_secrets[new_name] = ''
             elif new_name is not None:
