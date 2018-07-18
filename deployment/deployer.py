@@ -183,7 +183,8 @@ button a {
     color: #ff5555;
 }
 pre {
-    overflow-x: auto;
+    word-break: break-all;
+    white-space: pre-line;
 }
 .success, .error, .starting, .progress {
     margin: auto 10rem auto 2rem;
