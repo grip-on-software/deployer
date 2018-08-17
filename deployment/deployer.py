@@ -49,7 +49,7 @@ class Deployer(Authenticated_Application):
         ("bigboat_url", "URL to BigBoat instance", str),
         ("bigboat_key", "API key of BigBoat instance", str),
         ("bigboat_compose", "Repository path to compose files", str),
-        ("secret_files", "Secret files to add to deployment", file)
+        ("secret_files", "Secret files to add to deployment", open)
     ]
 
     # Compose files for BigBoat
@@ -212,7 +212,7 @@ pre {
 """
 
         cherrypy.response.headers['Content-Type'] = 'text/css'
-        cherrypy.response.headers['ETag'] = md5(content).hexdigest()
+        cherrypy.response.headers['ETag'] = md5(content.encode('ISO-8859-1')).hexdigest()
 
         cherrypy.lib.cptools.validate_etags()
 
@@ -303,7 +303,7 @@ pre {
                 "value": deployment.get(field_name, ''),
                 "props": ''
             }
-            if issubclass(field_type, file):
+            if field_type == open:
                 form += self._template.format("""
                 <label class="file">
                     {display_name!h}:
