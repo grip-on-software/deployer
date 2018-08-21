@@ -313,7 +313,7 @@ pre {
                 field["field_name"] += '_names'
                 if field["value"] != '':
                     field["value"] = ' '.join(field["value"].keys())
-            if issubclass(field_type, list):
+            elif issubclass(field_type, list):
                 field["value"] = ','.join(field["value"])
             elif issubclass(field_type, bool):
                 if field["value"] != '':
