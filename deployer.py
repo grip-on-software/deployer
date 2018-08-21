@@ -12,6 +12,10 @@ class Bootstrap_Deployer(Bootstrap):
     """
 
     @property
+    def application_id(self):
+        return 'deployer'
+
+    @property
     def description(self):
         return 'Run deployment WSGI server'
 
