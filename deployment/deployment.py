@@ -21,15 +21,20 @@ class Deployments(MutableSet):
             self.add(config)
 
     @classmethod
-    def read(cls, filename):
+    def read(cls, filename, fields):
         """
         Read a deployments collection from a JSON file.
         """
 
         if os.path.exists(filename):
             with open(filename) as deploy_file:
-                return cls(json.load(deploy_file,
-                                     object_pairs_hook=OrderedDict))
+                configs = json.load(deploy_file, object_pairs_hook=OrderedDict)
+                for config in configs:
+                    for field_name, _, field_config in fields:
+                        if field_name not in config:
+                            config[field_name] = field_config.get("default", '')
+
+                return cls(configs)
         else:
             return cls([])
 
@@ -208,6 +213,9 @@ class Deployment(Mapping):
                 branches = set([branch['name'] for branch in branch_data])
                 if len(branches) > 1:
                     raise ValueError('Latest build is caused by merge request')
+
+                if not self._config.get("jenkins_git", True):
+                    break
 
                 # Check whether the revision that was built is actually the
                 # upstream repository's HEAD commit for this branch.

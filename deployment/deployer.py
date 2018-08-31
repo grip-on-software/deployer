@@ -38,18 +38,22 @@ class Deployer(Authenticated_Application):
 
     # Fields in the deployment and their human-readable variant.
     FIELDS = [
-        ("name", "Deployment name", str),
-        ("git_path", "Git clone path", str),
-        ("git_url", "Git repository URL", str),
-        ("jenkins_job", "Jenkins job", str),
-        ("artifacts", "Add job artifacts to deployment", bool),
-        ("deploy_key", "Keep deploy key", bool),
-        ("script", "Install command", str),
-        ("services", "Systemctl service names", list),
-        ("bigboat_url", "URL to BigBoat instance", str),
-        ("bigboat_key", "API key of BigBoat instance", str),
-        ("bigboat_compose", "Repository path to compose files", str),
-        ("secret_files", "Secret files to add to deployment", open)
+        ("name", "Deployment name", {"type": "str"}),
+        ("git_path", "Git clone path", {"type": "str"}),
+        ("git_url", "Git repository URL", {"type": "str"}),
+        ("jenkins_job", "Jenkins job", {"type": "str"}),
+        ("jenkins_git", "Check build staleness against Git repository", {
+            "type": "bool",
+            "default": True
+        }),
+        ("artifacts", "Add job artifacts to deployment", {"type": "bool"}),
+        ("deploy_key", "Keep deploy key", {"type": "bool"}),
+        ("script", "Install command", {"type": "str"}),
+        ("services", "Systemctl service names", {"type": "list"}),
+        ("bigboat_url", "URL to BigBoat instance", {"type": "str"}),
+        ("bigboat_key", "API key of BigBoat instance", {"type": "str"}),
+        ("bigboat_compose", "Repository path to compose files", {"type": "str"}),
+        ("secret_files", "Secret files to add to deployment", {"type": "file"})
     ]
 
     # Compose files for BigBoat
@@ -225,7 +229,8 @@ pre {
         """
 
         if self._deployments is None:
-            self._deployments = Deployments.read(self.deploy_filename)
+            self._deployments = Deployments.read(self.deploy_filename,
+                                                 self.FIELDS)
 
         return self._deployments
 
@@ -292,7 +297,7 @@ pre {
 
     def _format_fields(self, deployment, **excluded):
         form = ''
-        for field_name, display_name, field_type in self.FIELDS:
+        for field_name, display_name, field_config in self.FIELDS:
             if field_name in excluded:
                 continue
 
@@ -300,10 +305,12 @@ pre {
                 "display_name": display_name,
                 "field_name": field_name,
                 "input_type": 'text',
-                "value": deployment.get(field_name, ''),
+                "value": deployment.get(field_name,
+                                        field_config.get('default', '')),
                 "props": ''
             }
-            if field_type == open:
+            field_type = field_config.get("type")
+            if field_type == "file":
                 form += self._template.format("""
                 <label class="file">
                     {display_name!h}:
@@ -313,9 +320,9 @@ pre {
                 field["field_name"] += '_names'
                 if field["value"] != '':
                     field["value"] = ' '.join(field["value"].keys())
-            elif issubclass(field_type, list):
+            elif field_type == "list":
                 field["value"] = ','.join(field["value"])
-            elif issubclass(field_type, bool):
+            elif field_type == "bool":
                 if field["value"] != '':
                     field["props"] += ' checked'
 
@@ -414,6 +421,7 @@ pre {
             "git_url": kwargs.pop("git_url", ''),
             "deploy_key": deploy_key,
             "jenkins_job": kwargs.pop("jenkins_job", ''),
+            "jenkins_git": kwargs.pop("jenkins_git", ''),
             "artifacts": kwargs.pop("artifacts", ''),
             "script": kwargs.pop("script", ''),
             "services": services.split(',') if services != '' else [],
