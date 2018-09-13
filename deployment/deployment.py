@@ -231,8 +231,11 @@ class Deployment(Mapping):
         # Check whether the latest (branch) build is complete and successful.
         if build.building:
             raise ValueError("Build is not complete")
-        if build.result != "SUCCESS":
-            raise ValueError("Build result was not success, but {}".format(build.result))
+
+        states = self._config.get("jenkins_states", ["SUCCESS"])
+        result = build.result
+        if result not in states:
+            raise ValueError("Build result was not {}, but {}".format(states.join(' or '), result))
 
         return build
 

@@ -46,6 +46,10 @@ class Deployer(Authenticated_Application):
             "type": "bool",
             "default": True
         }),
+        ("jenkins_states", "Build results to consider successful", {
+            "type": "list",
+            "default": ["SUCCESS"]
+        }),
         ("artifacts", "Add job artifacts to deployment", {"type": "bool"}),
         ("deploy_key", "Keep deploy key", {"type": "bool"}),
         ("script", "Install command", {"type": "str"}),
@@ -415,6 +419,7 @@ pre {
             self._upload_files(secret_files, kwargs.pop("secret_files", []))
 
         services = kwargs.pop("services", '')
+        states = kwargs.pop("jenkins_states", '')
         deployment = {
             "name": name,
             "git_path": kwargs.pop("git_path", ''),
@@ -422,6 +427,7 @@ pre {
             "deploy_key": deploy_key,
             "jenkins_job": kwargs.pop("jenkins_job", ''),
             "jenkins_git": kwargs.pop("jenkins_git", ''),
+            "jenkins_states": states.split(',') if states != '' else [],
             "artifacts": kwargs.pop("artifacts", ''),
             "script": kwargs.pop("script", ''),
             "services": services.split(',') if services != '' else [],
