@@ -22,6 +22,12 @@ class Deploy_Task(threading.Thread):
     Background task to update a deployment.
     """
 
+    # Compose files for BigBoat
+    FILES = [
+        ('docker-compose.yml', 'dockerCompose'),
+        ('bigboat-compose.yml', 'bigboatCompose')
+    ]
+
     def __init__(self, deployment, config, bus=None):
         super(Deploy_Task, self).__init__()
         self._deployment = deployment

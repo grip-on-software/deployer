@@ -60,12 +60,6 @@ class Deployer(Authenticated_Application):
         ("secret_files", "Secret files to add to deployment", {"type": "file"})
     ]
 
-    # Compose files for BigBoat
-    FILES = [
-        ('docker-compose.yml', 'dockerCompose'),
-        ('bigboat-compose.yml', 'bigboatCompose')
-    ]
-
     # Common HTML template
     COMMON_HTML = """<!doctype html>
 <html>
