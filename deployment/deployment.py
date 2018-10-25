@@ -194,13 +194,14 @@ class Deployment(Mapping):
 
         source = self.get_source()
         job = jenkins.get_job(self._config["jenkins_job"])
+        branch_name = self._config.get("git_branch", "master")
         if job.jobs:
-            # Retrieve master branch job of multibranch pipeline job
-            job = job.get_job('master')
+            # Retrieve branch job of multibranch pipeline job
+            job = job.get_job(branch_name)
 
         # Retrieve the latest branch build job.
         build = None
-        for branch in ('master', 'origin/master'):
+        for branch in (branch_name, 'origin/{}'.format(branch_name)):
             build, branch_build = job.get_last_branch_build(branch)
 
             if build is not None:
@@ -226,7 +227,7 @@ class Deployment(Mapping):
                 break
 
         if build is None:
-            raise ValueError('Master branch build could not be found')
+            raise ValueError('Branch build could not be found')
 
         # Check whether the latest (branch) build is complete and successful.
         if build.building:

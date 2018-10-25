@@ -41,6 +41,10 @@ class Deployer(Authenticated_Application):
         ("name", "Deployment name", {"type": "str"}),
         ("git_path", "Git clone path", {"type": "str"}),
         ("git_url", "Git repository URL", {"type": "str"}),
+        ("git_branch", "Git branch to check out", {
+            "type": "str",
+            "default": "master"
+        }),
         ("jenkins_job", "Jenkins job", {"type": "str"}),
         ("jenkins_git", "Check build staleness against Git repository", {
             "type": "bool",
@@ -418,6 +422,7 @@ pre {
             "name": name,
             "git_path": kwargs.pop("git_path", ''),
             "git_url": kwargs.pop("git_url", ''),
+            "git_branch": kwargs.pop("git_branch", "master"),
             "deploy_key": deploy_key,
             "jenkins_job": kwargs.pop("jenkins_job", ''),
             "jenkins_git": kwargs.pop("jenkins_git", ''),

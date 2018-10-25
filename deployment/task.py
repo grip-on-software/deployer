@@ -141,8 +141,10 @@ class Deploy_Task(threading.Thread):
         self._publish('progress', 'Updating Git repository')
         source = self._deployment.get_source()
         git_path = self._deployment["git_path"]
+        git_branch = self._deployment.get("git_branch", "master")
         repository = Git_Repository.from_source(source, git_path,
-                                                checkout=True, shared=True)
+                                                checkout=True, shared=True,
+                                                branch=git_branch)
 
         logging.info('Updated repository %s', repository.repo_name)
 
