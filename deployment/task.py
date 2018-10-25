@@ -163,7 +163,9 @@ class Deploy_Task(threading.Thread):
                                         cwd=git_path,
                                         env=environment)
             except subprocess.CalledProcessError as error:
-                raise RuntimeError('Could not run script {}: {}'.format(script, error.output))
+                output = error.output.decode('utf-8')
+                raise RuntimeError('Could not run script {}: {}'.format(script,
+                                                                        output))
 
         # Restart services
         for service in self._deployment["services"]:
