@@ -144,6 +144,7 @@ class Deploy_Task(threading.Thread):
         git_branch = self._deployment.get("git_branch", "master")
         repository = Git_Repository.from_source(source, git_path,
                                                 checkout=True, shared=True,
+                                                force=True, pull=True,
                                                 branch=git_branch)
 
         logging.info('Updated repository %s', repository.repo_name)
