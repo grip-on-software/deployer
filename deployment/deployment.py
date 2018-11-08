@@ -221,7 +221,8 @@ class Deployment(Mapping):
                 # Check whether the revision that was built is actually the
                 # upstream repository's HEAD commit for this branch.
                 revision = branch_build['revision']['SHA1']
-                if not source.repository_class.is_up_to_date(source, revision):
+                if not source.repository_class.is_up_to_date(source, revision,
+                                                             branch=branch_name):
                     raise ValueError('Latest build is stale compared to Git repository')
 
                 break
