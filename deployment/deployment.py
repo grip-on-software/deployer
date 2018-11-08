@@ -179,8 +179,10 @@ class Deployment(Mapping):
         if latest_version is None:
             return False
 
+        branch = self._config.get("git_branch", "master")
         try:
-            return source.repository_class.is_up_to_date(source, latest_version)
+            return source.repository_class.is_up_to_date(source, latest_version,
+                                                         branch=branch)
         except RepositorySourceException:
             return False
 
