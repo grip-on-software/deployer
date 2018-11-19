@@ -362,7 +362,7 @@ pre {
     def _upload_file(uploaded_file):
         block_size = 8192
         has_data = True
-        data = ''
+        data = b''
         while has_data:
             chunk = uploaded_file.read(block_size)
             data += chunk
