@@ -404,7 +404,7 @@ pre {
 
             logging.info('Reading uploaded file for name %s', name)
             data = self._upload_file(new_file.file)
-            current[name] = data.encode('utf-8')
+            current[name] = data.decode('utf-8')
 
     def _create_deployment(self, name, kwargs, deploy_key=None,
                            secret_files=None):
