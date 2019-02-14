@@ -239,7 +239,7 @@ class Deployment(Mapping):
         states = self._config.get("jenkins_states", ["SUCCESS"])
         result = build.result
         if result not in states:
-            raise ValueError("Build result was not {}, but {}".format(states.join(' or '), result))
+            raise ValueError("Build result was not {}, but {}".format(' or '.join(states), result))
 
         return build
 
