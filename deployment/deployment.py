@@ -186,6 +186,24 @@ class Deployment(Mapping):
         except RepositorySourceException:
             return False
 
+    def get_branches(self):
+        """
+        Retrieve a list of branch names that the upstream version has.
+        """
+
+        try:
+            source = self.get_source()
+        except ValueError:
+            return []
+
+        if source.repository_class is None:
+            return []
+
+        try:
+            return source.repository_class.get_branches(source)
+        except RepositorySourceException:
+            return []
+
     def check_jenkins(self, jenkins):
         """
         Check build stability before deployment based on Jenkins job success.

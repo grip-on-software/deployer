@@ -27,7 +27,7 @@ except ImportError:
     raise
 from server.application import Authenticated_Application
 from server.template import Template
-from .deployment import Deployments
+from .deployment import Deployments, Deployment
 from .task import Deploy_Task
 
 class Deployer(Authenticated_Application):
@@ -42,7 +42,7 @@ class Deployer(Authenticated_Application):
         ("git_path", "Git clone path", {"type": "str"}),
         ("git_url", "Git repository URL", {"type": "str"}),
         ("git_branch", "Git branch to check out", {
-            "type": "str",
+            "type": "branch",
             "default": "master"
         }),
         ("jenkins_job", "Jenkins job", {"type": "str"}),
@@ -140,7 +140,7 @@ body {
     box-shadow: 0 2px 3px rgba(10, 10, 10, 0.1), 0 0 0 1px rgba(10, 10, 10, 0.1);
     text-align: left;
 }
-form.edit label.file + label {
+form.edit label.file + label, form.edit label.branch + label {
     font-size: 90%;
     padding-left: 1rem;
 }
@@ -332,6 +332,34 @@ pre {
                     "value": '1',
                     "input_type": 'checkbox'
                 })
+            elif field_type == "branch":
+                branches = deployment.get_branches()
+                options = [
+                    self._template.format("""
+                        <option value="{branch!h}"{selected}>
+                            {branch!h}
+                        </option>""",
+                                          branch=branch,
+                                          selected=' selected=""'
+                                          if branch == field["value"] else '')
+                    for branch in branches
+                ]
+                field['options'] = '\n'.join(options)
+                if field["value"] not in branches:
+                    field['other_selected'] = ' selected=""'
+                else:
+                    field['other_selected'] = ''
+
+                form += self._template.format("""
+                <label class="branch">
+                    {display_name!h}:
+                    <select name="{field_name!h}">
+                        {options}
+                        <option value=""{other_selected}>Other&hellip;</option>
+                    </select>
+                </label>""", **field)
+                field["display_name"] = 'Other branch'
+                field["field_name"] += '_other'
 
             form += self._template.format("""
                 <label>
@@ -418,11 +446,15 @@ pre {
 
         services = kwargs.pop("services", '')
         states = kwargs.pop("jenkins_states", '')
+        branch = kwargs.pop("git_branch", '')
+        if branch == '':
+            branch = kwargs.pop("git_branch_other", "master")
+
         deployment = {
             "name": name,
             "git_path": kwargs.pop("git_path", ''),
             "git_url": kwargs.pop("git_url", ''),
-            "git_branch": kwargs.pop("git_branch", "master"),
+            "git_branch": branch,
             "deploy_key": deploy_key,
             "jenkins_job": kwargs.pop("jenkins_job", ''),
             "jenkins_git": kwargs.pop("jenkins_git", ''),
@@ -440,7 +472,7 @@ pre {
         with open('{}.pub'.format(deploy_key), 'r') as public_key_file:
             public_key = public_key_file.read()
 
-        return deployment, public_key
+        return self.deployments.get(deployment), public_key
 
     @cherrypy.expose
     def create(self, name='', **kwargs):
@@ -471,7 +503,8 @@ pre {
                 {form}
                 <button>Update</button>
             </form>""".format(session=self._get_session_html(), success=success,
-                              form=self._format_fields({}, deploy_key=False))
+                              form=self._format_fields(Deployment(),
+                                                       deploy_key=False))
 
         return self._format_html(title='Create', content=content)
 
