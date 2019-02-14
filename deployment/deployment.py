@@ -136,7 +136,7 @@ class Deployment(Mapping):
             return None, None
 
         repo = source.repository_class(source, self._config["git_path"])
-        if not repo.exists():
+        if repo.is_empty():
             return source, None
 
         return source, repo.repo.head.commit.hexsha
