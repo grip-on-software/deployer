@@ -25,6 +25,7 @@ try:
     from sshdeploy.key import Key
 except ImportError:
     raise
+from gatherer.jenkins import Jenkins
 from server.application import Authenticated_Application
 from server.template import Template
 from .deployment import Deployments, Deployment
@@ -45,7 +46,7 @@ class Deployer(Authenticated_Application):
             "type": "branch",
             "default": "master"
         }),
-        ("jenkins_job", "Jenkins job", {"type": "str"}),
+        ("jenkins_job", "Jenkins job", {"type": "job"}),
         ("jenkins_git", "Check build staleness against Git repository", {
             "type": "bool",
             "default": True
@@ -140,7 +141,7 @@ body {
     box-shadow: 0 2px 3px rgba(10, 10, 10, 0.1), 0 0 0 1px rgba(10, 10, 10, 0.1);
     text-align: left;
 }
-form.edit label.file + label, form.edit label.branch + label {
+form.edit label.file + label, form.edit label.options + label {
     font-size: 90%;
     padding-left: 1rem;
 }
@@ -332,34 +333,15 @@ pre {
                     "value": '1',
                     "input_type": 'checkbox'
                 })
+            elif field_type == "job":
+                jenkins = Jenkins.from_config(self.config)
+                jobs = [job.name for job in jenkins.jobs]
+                form += self._format_options_field(field, jobs,
+                                                   display_name='Other job')
             elif field_type == "branch":
                 branches = deployment.get_branches()
-                options = [
-                    self._template.format("""
-                        <option value="{branch!h}"{selected}>
-                            {branch!h}
-                        </option>""",
-                                          branch=branch,
-                                          selected=' selected=""'
-                                          if branch == field["value"] else '')
-                    for branch in branches
-                ]
-                field['options'] = '\n'.join(options)
-                if field["value"] not in branches:
-                    field['other_selected'] = ' selected=""'
-                else:
-                    field['other_selected'] = ''
-
-                form += self._template.format("""
-                <label class="branch">
-                    {display_name!h}:
-                    <select name="{field_name!h}">
-                        {options}
-                        <option value=""{other_selected}>Other&hellip;</option>
-                    </select>
-                </label>""", **field)
-                field["display_name"] = 'Other branch'
-                field["field_name"] += '_other'
+                form += self._format_options_field(field, branches,
+                                                   display_name='Other branch')
 
             form += self._template.format("""
                 <label>
@@ -368,6 +350,36 @@ pre {
                 </label>""", **field)
 
         return form
+
+    def _format_options_field(self, field, choices, display_name='Other'):
+        options = [
+            self._template.format("""
+                <option value="{choice!h}"{selected}>
+                    {choice!h}
+                </option>""",
+                                  choice=choice,
+                                  selected=' selected=""'
+                                  if choice == field["value"] else '')
+            for choice in choices
+        ]
+        field['options'] = '\n'.join(options)
+        if field["value"] not in choices:
+            field['other_selected'] = ' selected=""'
+        else:
+            field['other_selected'] = ''
+
+        form_options = self._template.format("""
+        <label class="options">
+            {display_name!h}:
+            <select name="{field_name!h}">
+                {options}
+                <option value=""{other_selected}>Other&hellip;</option>
+            </select>
+        </label>""", **field)
+        field["display_name"] = display_name
+        field["field_name"] += '_other'
+
+        return form_options
 
     def _generate_deploy_key(self, name):
         data = {
@@ -449,6 +461,9 @@ pre {
         branch = kwargs.pop("git_branch", '')
         if branch == '':
             branch = kwargs.pop("git_branch_other", "master")
+        job = kwargs.pop("jenkins_job", '')
+        if job == '':
+            job = kwargs.pop("jenkins_job_other", '')
 
         deployment = {
             "name": name,
@@ -456,7 +471,7 @@ pre {
             "git_url": kwargs.pop("git_url", ''),
             "git_branch": branch,
             "deploy_key": deploy_key,
-            "jenkins_job": kwargs.pop("jenkins_job", ''),
+            "jenkins_job": job,
             "jenkins_git": kwargs.pop("jenkins_git", ''),
             "jenkins_states": states.split(',') if states != '' else [],
             "artifacts": kwargs.pop("artifacts", ''),
