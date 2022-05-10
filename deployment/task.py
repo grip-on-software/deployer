@@ -1,9 +1,25 @@
 """
 Background deployment tasks.
+
+Copyright 2017-2020 ICTU
+Copyright 2017-2022 Leiden University
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """
 
 import logging
-import os.path
+import os
+from pathlib import Path
 import shlex
 import subprocess
 import threading
@@ -23,13 +39,13 @@ class Deploy_Task(threading.Thread):
     """
 
     # Compose files for BigBoat
-    FILES = [
+    BIGBOAT_FILES = [
         ('docker-compose.yml', 'dockerCompose'),
         ('bigboat-compose.yml', 'bigboatCompose')
     ]
 
     def __init__(self, deployment, config, bus=None):
-        super(Deploy_Task, self).__init__()
+        super().__init__()
         self._deployment = deployment
         self._name = deployment["name"]
         self._config = config
@@ -67,15 +83,18 @@ class Deploy_Task(threading.Thread):
         session = last_build.instance.session
         for artifact in last_build.data['artifacts']:
             path = artifact['relativePath']
-            self._publish('progress', 'Collecting artifact {}'.format(path))
+            self._publish('progress', f'Collecting artifact {path}')
 
-            dirname = os.path.join(repo_path, os.path.dirname(path))
-            if not os.path.exists(dirname):
-                os.makedirs(dirname)
+            # Ensure directories within the relative artifact path exist
+            repo_artifact = repo_path / path
+            dirname = repo_artifact.parent
+            if not dirname.exists():
+                dirname.mkdir(parents=True)
 
-            url = '{}/artifact/{}'.format(last_build.base_url, path)
+            # Download the artifact to the repository path
+            url = f'{last_build.base_url}/artifact/{path}'
             request = session.get(url)
-            with open(os.path.join(repo_path, path), 'wb') as repo_file:
+            with repo_artifact.open('wb') as repo_file:
                 repo_file.write(request.content)
 
     def _add_secret_files(self, deploy_path):
@@ -83,22 +102,22 @@ class Deploy_Task(threading.Thread):
         secret_files = self._deployment.get("secret_files", {})
         for secret_name, secret_file in list(secret_files.items()):
             if secret_name != '':
-                secret_path = os.path.join(deploy_path, secret_name)
+                secret_path = deploy_path / secret_name
                 try:
-                    with open(secret_path, 'w') as secret:
+                    with secret_path.open('w', encoding='utf-8') as secret:
                         secret.write(secret_file)
                 except IOError as error:
-                    raise RuntimeError("Could not write secret file: {}".format(str(error)))
+                    raise RuntimeError(f"Could not write secret file: {error}") from error
 
     def _update_bigboat(self, repository):
         if self._deployment.get("bigboat_key", '') == '':
             raise ValueError("BigBoat API key required to update BigBoat")
 
-        path = self._deployment.get("bigboat_compose", '')
+        path = Path(self._deployment.get("bigboat_compose", ''))
         files = {}
         paths = []
-        for filename, api_filename in self.FILES:
-            full_filename = '{}/{}'.format(path, filename).lstrip('./')
+        for filename, api_filename in self.BIGBOAT_FILES:
+            full_filename = str(path / filename)
             files[api_filename] = repository.get_contents(full_filename)
             paths.append(full_filename)
 
@@ -108,7 +127,7 @@ class Deploy_Task(threading.Thread):
             return
 
         self._publish('progress', 'Updating BigBoat compose files')
-        compose = yaml.load(files['bigboatCompose'])
+        compose = yaml.safe_load(files['bigboatCompose'])
         client = bigboat.Client_v2(self._deployment["bigboat_url"],
                                    self._deployment["bigboat_key"])
 
@@ -140,7 +159,7 @@ class Deploy_Task(threading.Thread):
         # Update Git repository using deploy key
         self._publish('progress', 'Updating Git repository')
         source = self._deployment.get_source()
-        git_path = self._deployment["git_path"]
+        git_path = Path(self._deployment["git_path"])
         git_branch = self._deployment.get("git_branch", "master")
         repository = Git_Repository.from_source(source, git_path,
                                                 checkout=True, shared=True,
@@ -158,7 +177,7 @@ class Deploy_Task(threading.Thread):
         script = self._deployment.get("script", '')
         if script != '':
             try:
-                self._publish('progress', 'Runnning script {}'.format(script))
+                self._publish('progress', f'Runnning script {script}')
                 environment = os.environ.copy()
                 environment['DEPLOYMENT_NAME'] = self._name
                 subprocess.check_output(shlex.split(script),
@@ -167,20 +186,18 @@ class Deploy_Task(threading.Thread):
                                         env=environment)
             except subprocess.CalledProcessError as error:
                 output = error.output.decode('utf-8')
-                raise RuntimeError('Could not run script {}: {}'.format(script,
-                                                                        output))
+                raise RuntimeError(f'Could not run script {script}: {output}') from error
 
         # Restart services
         for service in self._deployment["services"]:
             if service != '':
-                self._publish('progress',
-                              'Restarting service {}'.format(service))
+                self._publish('progress', f'Restarting service {service}')
                 try:
                     subprocess.check_call([
                         'sudo', 'systemctl', 'restart', service
                     ])
-                except subprocess.CalledProcessError:
-                    raise RuntimeError('Could not restart service {}'.format(service))
+                except subprocess.CalledProcessError as error:
+                    raise RuntimeError(f'Could not restart service {service}') from error
 
         # Update BigBoat dashboard applications
         if self._deployment.get("bigboat_url", '') != '':

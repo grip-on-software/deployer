@@ -1,30 +1,36 @@
 """
 Frontend for accessing deployments and (re)starting them.
-"""
 
-try:
-    from future import standard_library
-    standard_library.install_aliases()
-except ImportError:
-    raise
+Copyright 2017-2020 ICTU
+Copyright 2017-2022 Leiden University
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
 
 from collections import OrderedDict
 from hashlib import md5
-try:
-    from itertools import zip_longest
-except ImportError:
-    raise
+from itertools import zip_longest
 import logging
 import logging.config
-import os
+from pathlib import Path
 import sys
 import cherrypy
 try:
     from mock import MagicMock
     sys.modules['abraxas'] = MagicMock()
     from sshdeploy.key import Key
-except ImportError:
-    raise
+except ImportError as _error:
+    raise ImportError('Cannot import sshdeploy') from _error
 from gatherer.jenkins import Jenkins
 from server.application import Authenticated_Application
 from server.template import Template
@@ -82,12 +88,11 @@ class Deployer(Authenticated_Application):
 </html>"""
 
     def __init__(self, args, config):
-        super(Deployer, self).__init__(args, config)
+        super().__init__(args, config)
 
         self.args = args
         self.config = config
-        self.deploy_filename = os.path.join(self.args.deploy_path,
-                                            'deployment.json')
+        self.deploy_filename = Path(self.args.deploy_path) / 'deployment.json'
         self._deployments = None
 
         self._template = Template()
@@ -282,21 +287,21 @@ pre {
                                                    deployment=deployment,
                                                    status=status))
 
-            content += """
+            content += f"""
             <form>
                 <ul class="items">
-                    {items}
+                    {"".join(items)}
                 </ul>
                 <p><button formaction="create">Create</button></p>
-            </form>""".format(items='\n'.join(items))
+            </form>"""
 
         return self._format_html(title='List', content=content)
 
     def _find_deployment(self, name):
         try:
             return self.deployments.get(name)
-        except KeyError:
-            raise cherrypy.HTTPError(404, 'Deployment {} does not exist'.format(name))
+        except KeyError as error:
+            raise cherrypy.HTTPError(404, f'Deployment {name} does not exist') from error
 
     def _format_fields(self, deployment, **excluded):
         form = ''
@@ -383,18 +388,18 @@ pre {
 
     def _generate_deploy_key(self, name):
         data = {
-            'purpose': 'deploy key for {}'.format(name),
+            'purpose': f'deploy key for {name}',
             'keygen-options': '',
             'abraxas-account': False,
             'servers': {},
             'clients': {}
         }
         update = []
-        key_file = os.path.join(self.args.deploy_path, 'key-{}'.format(name))
-        if os.path.exists(key_file):
+        key_file = Path(self.args.deploy_path) / f'key-{name}'
+        if key_file.exists():
             logging.info('Removing old key file %s', key_file)
-            os.remove(key_file)
-        key = Key(key_file, data, update, {}, False)
+            key_file.unlink()
+        key = Key(str(key_file), data, update, {}, False)
         key.generate()
         return key.keyname
 
@@ -449,7 +454,7 @@ pre {
     def _create_deployment(self, name, kwargs, deploy_key=None,
                            secret_files=None):
         if name in self.deployments:
-            raise ValueError("Deployment '{}' already exists".format(name))
+            raise ValueError(f"Deployment '{name}' already exists")
 
         if deploy_key is None:
             deploy_key = self._generate_deploy_key(name)
@@ -484,7 +489,7 @@ pre {
         }
         self.deployments.add(deployment)
         self.deployments.write(self.deploy_filename)
-        with open('{}.pub'.format(deploy_key), 'r') as public_key_file:
+        with open(f'{deploy_key}.pub', 'r', encoding='utf-8') as public_key_file:
             public_key = public_key_file.read()
 
         return self.deployments.get(deployment), public_key
@@ -511,28 +516,26 @@ pre {
         else:
             success = ''
 
-        content = """
-            {session}
+        content = f"""
+            {self._get_session_html()}
             {success}
             <form class="edit" action="create" method="post" enctype="multipart/form-data">
-                {form}
+                {self._format_fields(Deployment(), deploy_key=False)}
                 <button>Update</button>
-            </form>""".format(session=self._get_session_html(), success=success,
-                              form=self._format_fields(Deployment(),
-                                                       deploy_key=False))
+            </form>"""
 
         return self._format_html(title='Create', content=content)
 
     def _check_old_secrets(self, secret_names, old_deployment):
-        old_path = old_deployment.get("git_path", "")
+        old_path = Path(old_deployment.get("git_path", ""))
         old_secrets = old_deployment.get("secret_files", {})
         old_names = list(old_secrets.keys())
         if old_names != secret_names:
             # Remove old files from repository which might never be overwritten
             for secret_file in old_secrets:
-                secret_path = os.path.join(old_path, secret_file)
-                if os.path.isfile(secret_path):
-                    os.remove(secret_path)
+                secret_path = old_path / secret_file
+                if secret_path.is_file():
+                    secret_path.unlink()
 
         new_secrets = OrderedDict()
         for new_name, old_name in zip_longest(secret_names, old_names):
@@ -569,8 +572,9 @@ pre {
                 # Generate a new deploy key
                 deploy_key = None
                 state = 'new'
-                if os.path.exists(old_deployment.get("deploy_key", '')):
-                    os.remove(old_deployment.get("deploy_key", ''))
+                old_key = Path(old_deployment.get("deploy_key", ''))
+                if old_key.exists():
+                    old_key.unlink()
 
             secret_names = kwargs.pop("secret_files_names", '').split(' ')
             secret_files = self._check_old_secrets(secret_names, old_deployment)
@@ -594,14 +598,13 @@ pre {
             <input type="hidden" name="old_name" value="{name!h}">""", name=name)
         form += self._format_fields(deployment)
 
-        content = """
-            {session}
+        content = f"""
+            {self._get_session_html()}
             {success}
             <form class="edit" action="edit" method="post" enctype="multipart/form-data">
                 {form}
                 <button>Update</button>
-            </form>""".format(session=self._get_session_html(), success=success,
-                              form=form)
+            </form>"""
 
         return self._format_html(title='Edit', content=content)
 

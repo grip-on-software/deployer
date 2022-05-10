@@ -1,10 +1,26 @@
 """
 Data structures for interfacing with deployment configurations.
+
+Copyright 2017-2020 ICTU
+Copyright 2017-2022 Leiden University
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """
 
-from collections import Mapping, MutableSet, OrderedDict
+from collections import OrderedDict
+from collections.abc import Mapping, MutableSet
 import json
-import os.path
+from pathlib import Path
 from gatherer.domain import Source
 from gatherer.version_control.repo import RepositorySourceException
 from gatherer.version_control.review import Review_System
@@ -26,8 +42,9 @@ class Deployments(MutableSet):
         Read a deployments collection from a JSON file.
         """
 
-        if os.path.exists(filename):
-            with open(filename) as deploy_file:
+        path = Path(filename)
+        if path.exists():
+            with path.open('r', encoding='utf-8') as deploy_file:
                 configs = json.load(deploy_file, object_pairs_hook=OrderedDict)
                 for config in configs:
                     for field_name, _, field_config in fields:
@@ -43,7 +60,7 @@ class Deployments(MutableSet):
         Write the deployments to a JSON file.
         """
 
-        with open(filename, 'w') as deploy_file:
+        with Path(filename).open('w', encoding='utf-8') as deploy_file:
             json.dump([
                 dict(deployment) for deployment in self._deployments.values()
             ], deploy_file)
@@ -99,7 +116,7 @@ class Deployments(MutableSet):
         del self._deployments[name]
 
     def __repr__(self):
-        return 'Deployments({!r})'.format(list(self._deployments.values()))
+        return f'Deployments({list(self._deployments.values())!r})'
 
 class Deployment(Mapping):
     """
@@ -221,7 +238,7 @@ class Deployment(Mapping):
 
         # Retrieve the latest branch build job.
         build = None
-        for branch in (branch_name, 'origin/{}'.format(branch_name)):
+        for branch in (branch_name, f'origin/{branch_name}'):
             build, branch_build = job.get_last_branch_build(branch)
 
             if build is not None:
@@ -231,7 +248,7 @@ class Deployment(Mapping):
                 # that branch not a merge request build, since the stability of
                 # the master branch code is not demonstrated by this build.
                 branch_data = branch_build['revision']['branch']
-                branches = set([branch['name'] for branch in branch_data])
+                branches = set(branch['name'] for branch in branch_data)
                 if len(branches) > 1:
                     raise ValueError('Latest build is caused by merge request')
 
@@ -257,7 +274,7 @@ class Deployment(Mapping):
         states = self._config.get("jenkins_states", ["SUCCESS"])
         result = build.result
         if result not in states:
-            raise ValueError("Build result was not {}, but {}".format(' or '.join(states), result))
+            raise ValueError(f"Build result was not {' or '.join(states)}, but {result}")
 
         return build
 
@@ -271,4 +288,4 @@ class Deployment(Mapping):
         return len(self._config)
 
     def __repr__(self):
-        return 'Deployment(name={!r})'.format(self._config["name"])
+        return 'Deployment(name={self._config["name"]!r})'
