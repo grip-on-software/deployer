@@ -52,17 +52,17 @@ class Deployments(MutableSet):
         """
 
         path = Path(filename)
-        if path.exists():
-            with path.open('r', encoding='utf-8') as deploy_file:
-                configs = json.load(deploy_file, object_pairs_hook=OrderedDict)
-                for config in configs:
-                    for field_name, _, field_config in fields:
-                        if field_name not in config:
-                            config[field_name] = field_config.get("default", '')
-
-                return cls(configs)
-        else:
+        if not path.exists():
             return cls([])
+
+        with path.open('r', encoding='utf-8') as deploy_file:
+            configs = json.load(deploy_file, object_pairs_hook=OrderedDict)
+            for config in configs:
+                for field_name, _, field_config in fields:
+                    if field_name not in config:
+                        config[field_name] = field_config.get("default", '')
+
+            return cls(configs)
 
     def write(self, filename: PathLike) -> None:
         """
@@ -284,6 +284,9 @@ class Deployment(Mapping):
 
                 raise ValueError('Latest build is stale compared to Git repository')
 
+        return self._check_build(build)
+
+    def _check_build(self, build: Optional[Build]) -> Build:
         if build is None:
             raise ValueError('Branch build could not be found')
 
