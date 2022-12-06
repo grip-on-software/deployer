@@ -1,5 +1,5 @@
 from typing import Any, Callable, Dict, List, Optional, TextIO, TypeVar, Union
-from . import dispatch, lib
+from . import dispatch
 from . import process
 from . import _cptree
 

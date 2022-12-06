@@ -28,6 +28,7 @@ from pathlib import Path
 import sys
 from typing import Any, BinaryIO, Dict, List, Optional, Union, Sequence, Tuple
 import cherrypy
+import cherrypy.lib.cptools
 from cherrypy._cpreqbody import Part
 try:
     from mock import MagicMock
