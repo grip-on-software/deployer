@@ -17,6 +17,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+from argparse import ArgumentParser
+from typing import Any, Dict
 import cherrypy
 from server.bootstrap import Bootstrap
 from deployment import Deployer
@@ -27,21 +29,21 @@ class Bootstrap_Deployer(Bootstrap):
     """
 
     @property
-    def application_id(self):
+    def application_id(self) -> str:
         return 'deployer'
 
     @property
-    def description(self):
+    def description(self) -> str:
         return 'Run deployment WSGI server'
 
-    def add_args(self, parser):
+    def add_args(self, parser: ArgumentParser) -> None:
         parser.add_argument('--deploy-path', dest='deploy_path',
                             default='.', help='Path to deploy data')
 
-    def mount(self, conf):
+    def mount(self, conf: Dict[str, Dict[str, Any]]) -> None:
         cherrypy.tree.mount(Deployer(self.args, self.config), '/deploy', conf)
 
-def main():
+def main() -> None:
     """
     Main entry point.
     """

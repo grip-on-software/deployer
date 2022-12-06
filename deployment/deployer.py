@@ -17,14 +17,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+from argparse import Namespace
 from collections import OrderedDict
+from configparser import RawConfigParser
 from hashlib import md5
 from itertools import zip_longest
 import logging
 import logging.config
 from pathlib import Path
 import sys
+from typing import Any, BinaryIO, Dict, List, Optional, Union, Sequence, Tuple
 import cherrypy
+from cherrypy._cpreqbody import Part
 try:
     from mock import MagicMock
     sys.modules['abraxas'] = MagicMock()
@@ -37,14 +41,15 @@ from server.template import Template
 from .deployment import Deployments, Deployment
 from .task import Deploy_Task
 
+Parameter = Union[str, Part, List[Part]]
+
 class Deployer(Authenticated_Application):
-    # pylint: disable=no-self-use
     """
     Deployer web interface.
     """
 
     # Fields in the deployment and their human-readable variant.
-    FIELDS = [
+    FIELDS: List[Tuple[str, str, Dict[str, Any]]] = [
         ("name", "Deployment name", {"type": "str"}),
         ("git_path", "Git clone path", {"type": "str"}),
         ("git_url", "Git repository URL", {"type": "str"}),
@@ -87,27 +92,28 @@ class Deployer(Authenticated_Application):
     </body>
 </html>"""
 
-    def __init__(self, args, config):
+    def __init__(self, args: Namespace, config: RawConfigParser):
         super().__init__(args, config)
 
         self.args = args
         self.config = config
         self.deploy_filename = Path(self.args.deploy_path) / 'deployment.json'
-        self._deployments = None
+        self._deployments: Optional[Deployments] = None
 
         self._template = Template()
 
-        self._deploy_progress = {}
+        self._deploy_progress: \
+            Dict[str, Dict[str, Union[str, Optional[Deploy_Task]]]] = {}
         cherrypy.engine.subscribe('stop', self._stop_threads)
         cherrypy.engine.subscribe('graceful', self._stop_threads)
         cherrypy.engine.subscribe('deploy', self._set_deploy_progress)
 
-    def _format_html(self, title='', content=''):
+    def _format_html(self, title: str = '', content: str = '') -> str:
         return self._template.format(self.COMMON_HTML, title=title,
                                      content=content)
 
     @cherrypy.expose
-    def index(self, page='list', params=''):
+    def index(self, page: str = 'list', params: str = '') -> str:
         """
         Login page.
         """
@@ -128,7 +134,7 @@ class Deployer(Authenticated_Application):
         return self._format_html(title='Login', content=form)
 
     @cherrypy.expose
-    def css(self):
+    def css(self) -> str:
         """
         Serve CSS.
         """
@@ -231,7 +237,7 @@ pre {
         return content
 
     @property
-    def deployments(self):
+    def deployments(self) -> Deployments:
         """
         Retrieve the current deployments.
         """
@@ -242,14 +248,14 @@ pre {
 
         return self._deployments
 
-    def _get_session_html(self):
+    def _get_session_html(self) -> str:
         return self._template.format("""
             <div class="logout">
                 {user!h} - <a href="logout">Logout</a>
             </div>""", user=cherrypy.session['authenticated'])
 
     @cherrypy.expose
-    def list(self):
+    def list(self) -> str:
         """
         List deployments.
         """
@@ -297,16 +303,16 @@ pre {
 
         return self._format_html(title='List', content=content)
 
-    def _find_deployment(self, name):
+    def _find_deployment(self, name: str) -> Deployment:
         try:
             return self.deployments.get(name)
         except KeyError as error:
             raise cherrypy.HTTPError(404, f'Deployment {name} does not exist') from error
 
-    def _format_fields(self, deployment, **excluded):
+    def _format_fields(self, deployment: Deployment, **included: bool) -> str:
         form = ''
         for field_name, display_name, field_config in self.FIELDS:
-            if field_name in excluded:
+            if not included.get(field_name, True):
                 continue
 
             field = {
@@ -356,7 +362,9 @@ pre {
 
         return form
 
-    def _format_options_field(self, field, choices, display_name='Other'):
+    def _format_options_field(self, field: Dict[str, str],
+                              choices: Sequence[str],
+                              display_name: str = 'Other') -> str:
         options = [
             self._template.format("""
                 <option value="{choice!h}"{selected}>
@@ -386,25 +394,25 @@ pre {
 
         return form_options
 
-    def _generate_deploy_key(self, name):
-        data = {
+    def _generate_deploy_key(self, name: str) -> str:
+        data: Dict[str, Union[str, bool, Dict[str, Union[str, List[str]]]]] = {
             'purpose': f'deploy key for {name}',
             'keygen-options': '',
             'abraxas-account': False,
             'servers': {},
             'clients': {}
         }
-        update = []
+        update: List[str] = []
         key_file = Path(self.args.deploy_path) / f'key-{name}'
         if key_file.exists():
             logging.info('Removing old key file %s', key_file)
             key_file.unlink()
-        key = Key(str(key_file), data, update, {}, False)
+        key = Key(str(key_file), data, update, set(), False)
         key.generate()
         return key.keyname
 
     @staticmethod
-    def _upload_file(uploaded_file):
+    def _upload_file(uploaded_file: BinaryIO) -> bytes:
         block_size = 8192
         has_data = True
         data = b''
@@ -417,7 +425,7 @@ pre {
         return data
 
     @staticmethod
-    def _extract_filename(path):
+    def _extract_filename(path: str) -> str:
         # Compatible filename parsing as per
         # https://html.spec.whatwg.org/multipage/input.html#fakepath-srsly
         if path[:12] == 'C:\\fakepath\\':
@@ -437,12 +445,14 @@ pre {
         # Just the file name
         return path
 
-    def _upload_files(self, current, new_files):
+    def _upload_files(self, current: Dict[str, str],
+                      new_files: Union[Part, List[Part]]) -> None:
         if not isinstance(new_files, list):
             new_files = [new_files]
 
         for name, new_file in zip_longest(list(current.keys()), new_files):
-            if new_file is None or new_file.file is None:
+            if new_file is None or new_file.file is None or \
+                new_file.filename is None:
                 break
             if name is None:
                 name = self._extract_filename(new_file.filename)
@@ -451,18 +461,23 @@ pre {
             data = self._upload_file(new_file.file)
             current[name] = data.decode('utf-8')
 
-    def _create_deployment(self, name, kwargs, deploy_key=None,
-                           secret_files=None):
+    def _create_deployment(self, name: str,
+                           kwargs: Dict[str, Parameter],
+                           deploy_key: Optional[str] = None,
+                           secret_files: Optional[Dict[str, str]] = None) -> \
+            Tuple[Deployment, str]:
         if name in self.deployments:
             raise ValueError(f"Deployment '{name}' already exists")
 
         if deploy_key is None:
             deploy_key = self._generate_deploy_key(name)
         if secret_files is not None:
-            self._upload_files(secret_files, kwargs.pop("secret_files", []))
+            new_files = kwargs.pop("secret_files", [])
+            if isinstance(new_files, (Part, list)):
+                self._upload_files(secret_files, new_files)
 
-        services = kwargs.pop("services", '')
-        states = kwargs.pop("jenkins_states", '')
+        services = str(kwargs.pop("services", ''))
+        states = str(kwargs.pop("jenkins_states", ''))
         branch = kwargs.pop("git_branch", '')
         if branch == '':
             branch = kwargs.pop("git_branch_other", "master")
@@ -478,10 +493,12 @@ pre {
             "deploy_key": deploy_key,
             "jenkins_job": job,
             "jenkins_git": kwargs.pop("jenkins_git", ''),
-            "jenkins_states": states.split(',') if states != '' else [],
+            "jenkins_states": states.split(',') if states != '' else
+                states.split(None),
             "artifacts": kwargs.pop("artifacts", ''),
             "script": kwargs.pop("script", ''),
-            "services": services.split(',') if services != '' else [],
+            "services": services.split(',') if services != '' else
+                services.split(None),
             "bigboat_url": kwargs.pop("bigboat_url", ''),
             "bigboat_key": kwargs.pop("bigboat_key", ''),
             "bigboat_compose": kwargs.pop("bigboat_compose", ''),
@@ -495,7 +512,7 @@ pre {
         return self.deployments.get(deployment), public_key
 
     @cherrypy.expose
-    def create(self, name='', **kwargs):
+    def create(self, name: str = '', **kwargs: Parameter) -> str:
         """
         Create a new deployment using a form or handle the form submission.
         """
@@ -526,7 +543,8 @@ pre {
 
         return self._format_html(title='Create', content=content)
 
-    def _check_old_secrets(self, secret_names, old_deployment):
+    def _check_old_secrets(self, secret_names: List[str],
+                           old_deployment: Deployment) -> Dict[str, str]:
         old_path = Path(old_deployment.get("git_path", ""))
         old_secrets = old_deployment.get("secret_files", {})
         old_names = list(old_secrets.keys())
@@ -550,7 +568,8 @@ pre {
         return new_secrets
 
     @cherrypy.expose
-    def edit(self, name=None, old_name=None, **kwargs):
+    def edit(self, name: Optional[str] = None, old_name: Optional[str] = None,
+             **kwargs: Parameter) -> str:
         """
         Display an existing deployment configuration in an editable form, or
         handle the form submission to update the deployment.
@@ -558,10 +577,13 @@ pre {
 
         self.validate_login()
         if name is None:
-            # Paramter 'name' required
+            # Parameter 'name' required
             raise cherrypy.HTTPRedirect('list')
 
         if cherrypy.request.method == 'POST':
+            if old_name is None:
+                raise cherrypy.HTTPError(400, "Parameter 'old_name' required")
+
             old_deployment = self._find_deployment(old_name)
             self.deployments.remove(old_deployment)
             if kwargs.pop("deploy_key"):
@@ -576,7 +598,7 @@ pre {
                 if old_key.exists():
                     old_key.unlink()
 
-            secret_names = kwargs.pop("secret_files_names", '').split(' ')
+            secret_names = str(kwargs.pop("secret_files_names", '')).split(' ')
             secret_files = self._check_old_secrets(secret_names, old_deployment)
 
             deployment, public_key = \
@@ -608,18 +630,18 @@ pre {
 
         return self._format_html(title='Edit', content=content)
 
-    def _stop_threads(self, *args, **kwargs):
+    def _stop_threads(self, *args: Any, **kwargs: Any) -> None:
         # pylint: disable=unused-argument
         for progress in list(self._deploy_progress.values()):
             thread = progress['thread']
-            if thread is not None:
+            if isinstance(thread, Deploy_Task):
                 thread.stop()
                 if thread.is_alive():
                     thread.join()
 
         self._deploy_progress = {}
 
-    def _set_deploy_progress(self, name, state, message):
+    def _set_deploy_progress(self, name: str, state: str, message: str) -> None:
         self._deploy_progress[name] = {
             'state': state,
             'message': message,
@@ -629,12 +651,16 @@ pre {
             self._deploy_progress[name]['thread'] = None
 
     @cherrypy.expose
-    def deploy(self, name):
+    def deploy(self, name: str = '') -> str:
         """
         Update the deployment based on the configuration.
         """
 
         self.validate_login()
+        if name is None:
+            # Parameter 'name' required
+            raise cherrypy.HTTPRedirect('list')
+
         deployment = self._find_deployment(name)
 
         if cherrypy.request.method != 'POST':

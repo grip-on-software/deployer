@@ -20,24 +20,33 @@ limitations under the License.
 from collections import OrderedDict
 from collections.abc import Mapping, MutableSet
 import json
+import os
 from pathlib import Path
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 from gatherer.domain import Source
+from gatherer.git.repo import Git_Repository
+from gatherer.jenkins import Jenkins, Build
 from gatherer.version_control.repo import RepositorySourceException
 from gatherer.version_control.review import Review_System
+
+Config = Dict[str, Any]
+DeploymentLike = Union[Config, 'Deployment', str]
+PathLike = Union[str, os.PathLike]
 
 class Deployments(MutableSet):
     """
     A set of deployments.
     """
 
-    def __init__(self, deployments):
+    def __init__(self, deployments: List[DeploymentLike]):
         # pylint: disable=super-init-not-called
-        self._deployments = {}
+        self._deployments: Dict[str, Deployment] = {}
         for config in deployments:
             self.add(config)
 
     @classmethod
-    def read(cls, filename, fields):
+    def read(cls, filename: PathLike,
+             fields: List[Tuple[str, str, Dict[str, Any]]]) -> 'Deployments':
         """
         Read a deployments collection from a JSON file.
         """
@@ -55,7 +64,7 @@ class Deployments(MutableSet):
         else:
             return cls([])
 
-    def write(self, filename):
+    def write(self, filename: PathLike) -> None:
         """
         Write the deployments to a JSON file.
         """
@@ -66,26 +75,32 @@ class Deployments(MutableSet):
             ], deploy_file)
 
     @staticmethod
-    def _convert(data):
+    def _convert(data: object) -> 'Deployment':
         if isinstance(data, Deployment):
             return data
 
         if isinstance(data, dict):
             return Deployment(**data)
 
-        return Deployment(name=data)
+        if isinstance(data, str):
+            return Deployment(name=data)
 
-    def __contains__(self, value):
-        deployment = self._convert(value)
+        raise TypeError(f'Cannot convert deployment data of type {type(data)}')
+
+    def __contains__(self, value: object) -> bool:
+        try:
+            deployment = self._convert(value)
+        except TypeError:
+            return False
         return deployment["name"] in self._deployments
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Deployment]:
         return iter(self._deployments.values())
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self._deployments)
 
-    def get(self, value):
+    def get(self, value: DeploymentLike) -> Deployment:
         """
         Retrieve a Deployment object stored in this set based on the name of
         the deployment or a (partial) Deployment object or dict containing at
@@ -98,7 +113,7 @@ class Deployments(MutableSet):
         name = deployment["name"]
         return self._deployments[name]
 
-    def add(self, value):
+    def add(self, value: DeploymentLike) -> None:
         deployment = self._convert(value)
         name = deployment["name"]
         if name in self._deployments:
@@ -107,7 +122,7 @@ class Deployments(MutableSet):
 
         self._deployments[name] = deployment
 
-    def discard(self, value):
+    def discard(self, value: DeploymentLike) -> None:
         deployment = self._convert(value)
         name = deployment["name"]
         if name not in self._deployments:
@@ -115,7 +130,7 @@ class Deployments(MutableSet):
 
         del self._deployments[name]
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'Deployments({list(self._deployments.values())!r})'
 
 class Deployment(Mapping):
@@ -123,11 +138,11 @@ class Deployment(Mapping):
     A single deployment configuration.
     """
 
-    def __init__(self, **config):
+    def __init__(self, **config: Any):
         # pylint: disable=super-init-not-called
         self._config = config
 
-    def get_source(self):
+    def get_source(self) -> Source:
         """
         Retrieve a Source object describing the version control system of
         this deployment's source code origin.
@@ -143,7 +158,8 @@ class Deployment(Mapping):
 
         return source
 
-    def _get_latest_source_version(self):
+    def _get_latest_source_version(self) -> \
+            Tuple[Optional[Source], Optional[str]]:
         try:
             source = self.get_source()
         except ValueError:
@@ -153,47 +169,50 @@ class Deployment(Mapping):
             return None, None
 
         repo = source.repository_class(source, self._config["git_path"])
-        if repo.is_empty():
+        if not isinstance(repo, Git_Repository) or repo.is_empty():
             return source, None
 
         return source, repo.repo.head.commit.hexsha
 
-    def get_compare_url(self):
+    def get_compare_url(self) -> Optional[str]:
         """
         Retrieve a URL to a human-readable comparison page for the changes since
         the latest version.
         """
 
         source, latest_version = self._get_latest_source_version()
-        if latest_version is None:
+        if source is None or source.repository_class is None or \
+            latest_version is None:
             return None
         if not issubclass(source.repository_class, Review_System):
             return None
 
         return source.repository_class.get_compare_url(source, latest_version)
 
-    def get_tree_url(self):
+    def get_tree_url(self) -> Optional[str]:
         """
         Retrieve a URL to a human-readable page showing the state of the
         repository at the latest version.
         """
 
         source, latest_version = self._get_latest_source_version()
-        if latest_version is None:
+        if source is None or source.repository_class is None or \
+            latest_version is None:
             return None
         if not issubclass(source.repository_class, Review_System):
             return None
 
         return source.repository_class.get_tree_url(source, latest_version)
 
-    def is_up_to_date(self):
+    def is_up_to_date(self) -> bool:
         """
         Check whether the deployment's local checkout is up to date compared
         to the upstream version.
         """
 
         source, latest_version = self._get_latest_source_version()
-        if latest_version is None:
+        if source is None or source.repository_class is None or \
+            latest_version is None:
             return False
 
         branch = self._config.get("git_branch", "master")
@@ -203,7 +222,7 @@ class Deployment(Mapping):
         except RepositorySourceException:
             return False
 
-    def get_branches(self):
+    def get_branches(self) -> List[str]:
         """
         Retrieve a list of branch names that the upstream version has.
         """
@@ -221,7 +240,7 @@ class Deployment(Mapping):
         except RepositorySourceException:
             return []
 
-    def check_jenkins(self, jenkins):
+    def check_jenkins(self, jenkins: Jenkins) -> Build:
         """
         Check build stability before deployment based on Jenkins job success.
 
@@ -241,7 +260,8 @@ class Deployment(Mapping):
         for branch in (branch_name, f'origin/{branch_name}'):
             build, branch_build = job.get_last_branch_build(branch)
 
-            if build is not None:
+            if build is not None and branch_build is not None and \
+                source.repository_class is not None:
                 # Retrieve the branches that were involved in this build.
                 # Branch may be duplicated in case of merge strategies.
                 # We only accept master branch builds if the latest build for
@@ -258,11 +278,11 @@ class Deployment(Mapping):
                 # Check whether the revision that was built is actually the
                 # upstream repository's HEAD commit for this branch.
                 revision = branch_build['revision']['SHA1']
-                if not source.repository_class.is_up_to_date(source, revision,
-                                                             branch=branch_name):
-                    raise ValueError('Latest build is stale compared to Git repository')
+                if source.repository_class.is_up_to_date(source, revision,
+                                                         branch=branch_name):
+                    break
 
-                break
+                raise ValueError('Latest build is stale compared to Git repository')
 
         if build is None:
             raise ValueError('Branch build could not be found')
@@ -278,14 +298,14 @@ class Deployment(Mapping):
 
         return build
 
-    def __getitem__(self, item):
+    def __getitem__(self, item: str) -> Any:
         return self._config[item]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self._config)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self._config)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return 'Deployment(name={self._config["name"]!r})'

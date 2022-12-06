@@ -1,0 +1,92 @@
+{
+    "$id": "https://gros.liacs.nl/schema/deployer/deployment.json",
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Deployer deployments",
+    "$ref": "#/$defs/deployments",
+    "$defs": {
+        "deployments": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/deployment"}
+        },
+        "deployment": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the deployment."
+                },
+                "git_path": {
+                    "type": "string",
+                    "description": "Path to clone the Git repository to."
+                },
+                "git_url": {
+                    "type": "string",
+                    "description": "Location of the origin Git repository."
+                },
+                "git_branch": {
+                    "type": "string",
+                    "default": "master",
+                    "description": "Branch of the Git repository to check out."
+                },
+                "jenkins_job": {
+                    "type": "string",
+                    "description": "Job on the Jenkins server to check for stability, staleness and artifacts."
+                },
+                "jenkins_git": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Whether to check staleness of Jenkins build compared to Git repository."
+                },
+                "jenkins_states": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[A-Z]+$"
+                    },
+                    "default": ["SUCCESS"],
+                    "description": "Results of builds on Jenkins to consider acceptable."
+                },
+                "artifacts": {
+                    "type": "boolean",
+                    "description": "Whether to include artifacts from Jenkins job to the deployment."
+                },
+                "deploy_key": {
+                    "type": "boolean",
+                    "description": "Whether to keep an earlier generated deploy SSH key for authenticating connections to the Git repository."
+                },
+                "script": {
+                    "type": "string",
+                    "description": "Shell command to perform upon installing the deployment."
+                },
+                "services": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Service names in `systemctl` to restart upon installing the deployment."
+                },
+                "bigboat_url": {
+                    "type": "string",
+                    "format": "uri",
+                    "default": "",
+                    "description": "URL of the BigBoat instance to use when updating the compose files of the deployment."
+                },
+                "bigboat_key": {
+                    "type": "string",
+                    "description": "API key of the BigBoat instance to use when updating the compose files of the deployment."
+                },
+                "bigboat_compose": {
+                    "type": "string",
+                    "description": "Path in the Git repository to the compose files to update on the BigBoat instance."
+                },
+                "secret_files": {
+                    "type": "object",
+                    "patternProperties": {
+                        ".+": {
+                            "type": "string"
+                        }
+                    },
+                    "description": "Files to add to the repository when updating the deployment."
+                }
+            }
+        }
+    }
+}

@@ -17,16 +17,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+from configparser import RawConfigParser
 import logging
 import os
 from pathlib import Path
 import shlex
 import subprocess
 import threading
+from typing import Dict, List, Optional, Union
 import bigboat
+from cherrypy.process.wspbus import Bus
 import yaml
 from gatherer.git import Git_Repository
-from gatherer.jenkins import Jenkins
+from gatherer.jenkins import Jenkins, Build
+from .deployment import Deployment
 
 class Thread_Interrupt(Exception):
     """
@@ -44,7 +48,8 @@ class Deploy_Task(threading.Thread):
         ('bigboat-compose.yml', 'bigboatCompose')
     ]
 
-    def __init__(self, deployment, config, bus=None):
+    def __init__(self, deployment: Deployment, config: RawConfigParser,
+                 bus: Optional[Bus] = None):
         super().__init__()
         self._deployment = deployment
         self._name = deployment["name"]
@@ -52,7 +57,7 @@ class Deploy_Task(threading.Thread):
         self._bus = bus
         self._stop = False
 
-    def run(self):
+    def run(self) -> None:
         try:
             self._deploy()
         except (KeyboardInterrupt, SystemExit, Thread_Interrupt):
@@ -60,14 +65,14 @@ class Deploy_Task(threading.Thread):
         except (RuntimeError, ValueError) as error:
             self._publish('error', str(error))
 
-    def stop(self):
+    def stop(self) -> None:
         """
         Indicate that the thread should stop.
         """
 
         self._stop = True
 
-    def _publish(self, state, message):
+    def _publish(self, state: str, message: str) -> None:
         if self._stop:
             raise Thread_Interrupt("Thread is stopped")
 
@@ -75,7 +80,7 @@ class Deploy_Task(threading.Thread):
         if self._bus is not None:
             self._bus.publish('deploy', self._name, state, message)
 
-    def _add_artifacts(self, repo_path, last_build):
+    def _add_artifacts(self, repo_path: Path, last_build: Build) -> None:
         if 'artifacts' not in last_build.data or not last_build.data['artifacts']:
             raise RuntimeError('Jenkins build has no artifacts')
 
@@ -97,7 +102,7 @@ class Deploy_Task(threading.Thread):
             with repo_artifact.open('wb') as repo_file:
                 repo_file.write(request.content)
 
-    def _add_secret_files(self, deploy_path):
+    def _add_secret_files(self, deploy_path: Path) -> None:
         self._publish('progress', 'Writing secret files')
         secret_files = self._deployment.get("secret_files", {})
         for secret_name, secret_file in list(secret_files.items()):
@@ -109,19 +114,20 @@ class Deploy_Task(threading.Thread):
                 except IOError as error:
                     raise RuntimeError(f"Could not write secret file: {error}") from error
 
-    def _update_bigboat(self, repository):
+    def _update_bigboat(self, repository: Git_Repository) -> None:
         if self._deployment.get("bigboat_key", '') == '':
             raise ValueError("BigBoat API key required to update BigBoat")
 
         path = Path(self._deployment.get("bigboat_compose", ''))
-        files = {}
-        paths = []
+        files: Dict[str, bytes] = {}
+        paths: List[Union[str, os.PathLike]] = []
         for filename, api_filename in self.BIGBOAT_FILES:
-            full_filename = str(path / filename)
-            files[api_filename] = repository.get_contents(full_filename)
+            full_filename = path / filename
+            files[api_filename] = repository.get_contents(str(full_filename))
             paths.append(full_filename)
 
-        if not repository.head.diff(repository.prev_head, paths=paths):
+        if not repository.repo.head.commit.diff(repository.prev_head,
+                                                paths=paths):
             self._publish('progress',
                           'BigBoat compose files were unchanged, skipping.')
             return
@@ -147,7 +153,7 @@ class Deploy_Task(threading.Thread):
         self._publish('progress', 'Updating BigBoat instances')
         client.update_instance(name, name, version)
 
-    def _deploy(self):
+    def _deploy(self) -> None:
         # Check Jenkins job success
         if self._deployment.get("jenkins_job", '') != '':
             jenkins = Jenkins.from_config(self._config)
