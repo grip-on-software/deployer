@@ -3,4 +3,3 @@ gros-server==0.0.3
 bigboat==1.0.1
 PyYAML==6.0.1
 sshdeploy==1.1.4
-mock==5.1.0

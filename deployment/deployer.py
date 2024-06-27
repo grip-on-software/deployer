@@ -32,11 +32,12 @@ import cherrypy
 import cherrypy.lib.cptools
 from cherrypy._cpreqbody import Part
 try:
-    from mock import MagicMock
+    from unittest.mock import MagicMock
     sys.modules['abraxas'] = MagicMock()
     from sshdeploy.key import Key
-except ImportError as _error:
-    raise ImportError('Cannot import sshdeploy') from _error
+except ImportError:
+    sys.modules.pop('abraxas', None)
+    raise
 from gatherer.jenkins import Jenkins
 from server.application import Authenticated_Application
 from server.template import Template
