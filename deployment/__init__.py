@@ -21,3 +21,4 @@ limitations under the License.
 from .deployer import Deployer
 
 __all__ = ["Deployer"]
+__version__ = "0.0.3"
