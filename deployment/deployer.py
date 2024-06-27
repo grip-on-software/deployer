@@ -620,6 +620,8 @@ pre {
             <pre>{deploy_key!h}</pre>""", state=state, deploy_key=public_key)
         else:
             success = ''
+            if old_name is not None:
+                name = old_name
             deployment = self._find_deployment(name)
 
         form = self._template.format("""
