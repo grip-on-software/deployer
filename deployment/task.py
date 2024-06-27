@@ -25,13 +25,18 @@ from pathlib import Path
 import shlex
 import subprocess
 import threading
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, TYPE_CHECKING
 import bigboat
 from cherrypy.process.wspbus import Bus
 import yaml
 from gatherer.git import Git_Repository
 from gatherer.jenkins import Jenkins, Build
 from .deployment import Deployment
+
+if TYPE_CHECKING:
+    PathLike = Union[str, os.PathLike[str]]
+else:
+    PathLike = Union[str, os.PathLike]
 
 class Thread_Interrupt(Exception):
     """
@@ -53,7 +58,7 @@ class Deploy_Task(threading.Thread):
                  bus: Optional[Bus] = None):
         super().__init__()
         self._deployment = deployment
-        self._name = deployment["name"]
+        self._name = str(deployment["name"])
         self._config = config
         self._bus = bus
         self._stop = False
@@ -88,7 +93,7 @@ class Deploy_Task(threading.Thread):
         self._publish('progress', 'Collecting artifacts')
         session = last_build.instance.session
         for artifact in last_build.data['artifacts']:
-            path = artifact['relativePath']
+            path = str(artifact['relativePath'])
             self._publish('progress', f'Collecting artifact {path}')
 
             # Ensure directories within the relative artifact path exist
@@ -105,7 +110,7 @@ class Deploy_Task(threading.Thread):
 
     def _add_secret_files(self, deploy_path: Path) -> None:
         self._publish('progress', 'Writing secret files')
-        secret_files = self._deployment.get("secret_files", {})
+        secret_files: Dict[str, str] = self._deployment.get("secret_files", {})
         for secret_name, secret_file in list(secret_files.items()):
             if secret_name != '':
                 secret_path = deploy_path / secret_name
@@ -121,7 +126,7 @@ class Deploy_Task(threading.Thread):
 
         path = Path(self._deployment.get("bigboat_compose", ''))
         files: Dict[str, bytes] = {}
-        paths: List[Union[str, os.PathLike]] = []
+        paths: List[PathLike] = []
         for filename, api_filename in self.BIGBOAT_FILES:
             full_filename = path / filename
             files[api_filename] = repository.get_contents(str(full_filename))
@@ -135,11 +140,11 @@ class Deploy_Task(threading.Thread):
 
         self._publish('progress', 'Updating BigBoat compose files')
         compose = yaml.safe_load(files['bigboatCompose'])
-        client = bigboat.Client_v2(self._deployment["bigboat_url"],
-                                   self._deployment["bigboat_key"])
+        client = bigboat.Client_v2(str(self._deployment["bigboat_url"]),
+                                   str(self._deployment["bigboat_key"]))
 
-        name = compose['name']
-        version = compose['version']
+        name = str(compose['name'])
+        version = str(compose['version'])
         application = client.get_app(name, version)
         if application is None:
             logging.warning('Application %s version %s not on %s, creating.',
@@ -157,17 +162,16 @@ class Deploy_Task(threading.Thread):
     def _deploy(self) -> None:
         # Check Jenkins job success
         if self._deployment.get("jenkins_job", '') != '':
-            jenkins = Jenkins.from_config(self._config)
             self._publish('progress', 'Checking Jenkins build state')
-            last_build = self._deployment.check_jenkins(jenkins)
+            last_build = self._deployment.check_jenkins(self._jenkins)
         else:
             last_build = None
 
         # Update Git repository using deploy key
         self._publish('progress', 'Updating Git repository')
         source = self._deployment.get_source()
-        git_path = Path(self._deployment["git_path"])
-        git_branch = self._deployment.get("git_branch", "master")
+        git_path = Path(str(self._deployment["git_path"]))
+        git_branch = str(self._deployment.get("git_branch", "master"))
         repository = Git_Repository.from_source(source, git_path,
                                                 checkout=True, shared=True,
                                                 force=True, pull=True,
@@ -181,7 +185,7 @@ class Deploy_Task(threading.Thread):
         self._add_secret_files(git_path)
 
         # Run script
-        script = self._deployment.get("script", '')
+        script = str(self._deployment.get("script", ''))
         if script != '':
             try:
                 self._publish('progress', f'Runnning script {script}')
@@ -192,11 +196,12 @@ class Deploy_Task(threading.Thread):
                                         cwd=git_path,
                                         env=environment)
             except subprocess.CalledProcessError as error:
-                output = error.output.decode('utf-8')
+                output = str(error.output.decode('utf-8'))
                 raise RuntimeError(f'Could not run script {script}: {output}') from error
 
         # Restart services
-        for service in self._deployment["services"]:
+        services: List[str] = self._deployment["services"]
+        for service in services:
             if service != '':
                 self._publish('progress', f'Restarting service {service}')
                 try:

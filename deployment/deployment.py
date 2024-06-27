@@ -23,31 +23,36 @@ from collections.abc import Mapping, MutableSet
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, \
+    Union, TYPE_CHECKING
 from gatherer.domain import Source
 from gatherer.git.repo import Git_Repository
 from gatherer.jenkins import Jenkins, Build
 from gatherer.version_control.repo import RepositorySourceException
 from gatherer.version_control.review import Review_System
 
-Config = Dict[str, Any]
+ConfigItem = Any
+Config = Dict[str, ConfigItem]
 DeploymentLike = Union[Config, 'Deployment', str]
-PathLike = Union[str, os.PathLike]
+Fields = List[Tuple[str, str, Dict[str, Any]]]
+if TYPE_CHECKING:
+    PathLike = Union[str, os.PathLike[str]]
+else:
+    PathLike = Union[str, os.PathLike]
 
 class Deployments(MutableSet):
     """
     A set of deployments.
     """
 
-    def __init__(self, deployments: List[DeploymentLike]):
+    def __init__(self, deployments: Iterable[DeploymentLike]):
         # pylint: disable=super-init-not-called
         self._deployments: Dict[str, Deployment] = {}
         for config in deployments:
             self.add(config)
 
     @classmethod
-    def read(cls, filename: PathLike,
-             fields: List[Tuple[str, str, Dict[str, Any]]]) -> 'Deployments':
+    def read(cls, filename: PathLike, fields: Fields) -> 'Deployments':
         """
         Read a deployments collection from a JSON file.
         """
@@ -57,7 +62,8 @@ class Deployments(MutableSet):
             return cls([])
 
         with path.open('r', encoding='utf-8') as deploy_file:
-            configs = json.load(deploy_file, object_pairs_hook=OrderedDict)
+            configs: List[Config] = json.load(deploy_file,
+                                              object_pairs_hook=OrderedDict)
             for config in configs:
                 for field_name, _, field_config in fields:
                     if field_name not in config:
@@ -93,15 +99,16 @@ class Deployments(MutableSet):
             deployment = self._convert(value)
         except TypeError:
             return False
-        return deployment["name"] in self._deployments
+        name = str(deployment["name"])
+        return name in self._deployments
 
-    def __iter__(self) -> Iterator[Deployment]:
+    def __iter__(self) -> Iterator['Deployment']:
         return iter(self._deployments.values())
 
     def __len__(self) -> int:
         return len(self._deployments)
 
-    def get(self, value: DeploymentLike) -> Deployment:
+    def get(self, value: DeploymentLike) -> 'Deployment':
         """
         Retrieve a Deployment object stored in this set based on the name of
         the deployment or a (partial) Deployment object or dict containing at
@@ -111,12 +118,12 @@ class Deployments(MutableSet):
         """
 
         deployment = self._convert(value)
-        name = deployment["name"]
+        name = str(deployment["name"])
         return self._deployments[name]
 
     def add(self, value: DeploymentLike) -> None:
         deployment = self._convert(value)
-        name = deployment["name"]
+        name = str(deployment["name"])
         if name in self._deployments:
             # Ignore duplicate deployments
             return
@@ -125,7 +132,7 @@ class Deployments(MutableSet):
 
     def discard(self, value: DeploymentLike) -> None:
         deployment = self._convert(value)
-        name = deployment["name"]
+        name = str(deployment["name"])
         if name not in self._deployments:
             return
 
@@ -139,7 +146,7 @@ class Deployment(Mapping):
     A single deployment configuration.
     """
 
-    def __init__(self, **config: Any):
+    def __init__(self, **config: ConfigItem):
         # pylint: disable=super-init-not-called
         self._config = config
 
@@ -153,9 +160,9 @@ class Deployment(Mapping):
             raise ValueError("Cannot retrieve Git repository: misconfiguration")
 
         # Describe Git source repository
-        source = Source.from_type('git', name=self._config["name"],
-                                  url=self._config["git_url"])
-        source.credentials_path = self._config["deploy_key"]
+        source = Source.from_type('git', name=str(self._config["name"]),
+                                  url=str(self._config["git_url"]))
+        source.credentials_path = str(self._config["deploy_key"])
 
         return source
 
@@ -169,7 +176,7 @@ class Deployment(Mapping):
         if source.repository_class is None:
             return None, None
 
-        repo = source.repository_class(source, self._config["git_path"])
+        repo = source.repository_class(source, str(self._config["git_path"]))
         if not isinstance(repo, Git_Repository) or repo.is_empty():
             return source, None
 
@@ -216,7 +223,7 @@ class Deployment(Mapping):
             latest_version is None:
             return False
 
-        branch = self._config.get("git_branch", "master")
+        branch = str(self._config.get("git_branch", "master"))
         try:
             return source.repository_class.is_up_to_date(source, latest_version,
                                                          branch=branch)
@@ -250,8 +257,8 @@ class Deployment(Mapping):
         """
 
         source = self.get_source()
-        job = jenkins.get_job(self._config["jenkins_job"])
-        branch_name = self._config.get("git_branch", "master")
+        job = jenkins.get_job(str(self._config["jenkins_job"]))
+        branch_name = str(self._config.get("git_branch", "master"))
         if job.jobs:
             # Retrieve branch job of multibranch pipeline job
             job = job.get_job(branch_name)
@@ -278,7 +285,7 @@ class Deployment(Mapping):
 
                 # Check whether the revision that was built is actually the
                 # upstream repository's HEAD commit for this branch.
-                revision = branch_build['revision']['SHA1']
+                revision = str(branch_build['revision']['SHA1'])
                 if source.repository_class.is_up_to_date(source, revision,
                                                          branch=branch_name):
                     break
@@ -295,14 +302,14 @@ class Deployment(Mapping):
         if build.building:
             raise ValueError("Build is not complete")
 
-        states = self._config.get("jenkins_states", ["SUCCESS"])
+        states: List[str] = self._config.get("jenkins_states", ["SUCCESS"])
         result = build.result
         if result not in states:
             raise ValueError(f"Build result was not {' or '.join(states)}, but {result}")
 
         return build
 
-    def __getitem__(self, item: str) -> Any:
+    def __getitem__(self, item: str) -> ConfigItem:
         return self._config[item]
 
     def __iter__(self) -> Iterator[str]:

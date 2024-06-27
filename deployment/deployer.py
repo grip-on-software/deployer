@@ -40,7 +40,7 @@ except ImportError as _error:
 from gatherer.jenkins import Jenkins
 from server.application import Authenticated_Application
 from server.template import Template
-from .deployment import Deployments, Deployment
+from .deployment import Deployments, Deployment, Fields
 from .task import Deploy_Task
 
 Parameter = Union[str, Part, List[Part]]
@@ -51,7 +51,7 @@ class Deployer(Authenticated_Application):
     """
 
     # Fields in the deployment and their human-readable variant.
-    FIELDS: List[Tuple[str, str, Dict[str, Any]]] = [
+    FIELDS: Fields = [
         ("name", "Deployment name", {"type": "str"}),
         ("git_path", "Git clone path", {"type": "str"}),
         ("git_url", "Git repository URL", {"type": "str"}),
@@ -278,8 +278,10 @@ pre {
                         {status}
                     </li>"""
             items = []
-            for deployment in sorted(self.deployments,
-                                     key=lambda deployment: deployment["name"]):
+            deployments: List[Deployment] = \
+                sorted(self.deployments,
+                       key=lambda deployment: str(deployment["name"]))
+            for deployment in deployments:
                 if deployment.is_up_to_date():
                     status = 'Up to date'
                     url = deployment.get_tree_url()
@@ -452,7 +454,8 @@ pre {
         if not isinstance(new_files, list):
             new_files = [new_files]
 
-        for name, new_file in zip_longest(list(current.keys()), new_files):
+        for name, new_file in zip_longest(list(current.keys()), new_files,
+                                          fillvalue=None):
             if new_file is None or new_file.file is None or \
                 new_file.filename is None:
                 break
@@ -548,7 +551,7 @@ pre {
     def _check_old_secrets(self, secret_names: List[str],
                            old_deployment: Deployment) -> Dict[str, str]:
         old_path = Path(old_deployment.get("git_path", ""))
-        old_secrets = old_deployment.get("secret_files", {})
+        old_secrets: Dict[str, str] = old_deployment.get("secret_files", {})
         old_names = list(old_secrets.keys())
         if old_names != secret_names:
             # Remove old files from repository which might never be overwritten
@@ -558,13 +561,14 @@ pre {
                     secret_path.unlink()
 
         new_secrets = OrderedDict()
-        for new_name, old_name in zip_longest(secret_names, old_names):
-            if new_name == '':
+        for new_name, old_name in zip_longest(secret_names, old_names,
+                                              fillvalue=None):
+            if new_name == '' or new_name is None:
                 continue
 
             if old_name is None:
                 new_secrets[new_name] = ''
-            elif new_name is not None:
+            else:
                 new_secrets[new_name] = old_secrets[old_name]
 
         return new_secrets
@@ -590,7 +594,7 @@ pre {
             self.deployments.remove(old_deployment)
             if kwargs.pop("deploy_key"):
                 # Keep the deploy key according to checkbox state
-                deploy_key = old_deployment.get("deploy_key", '')
+                deploy_key = str(old_deployment.get("deploy_key", ''))
                 state = 'original'
             else:
                 # Generate a new deploy key
@@ -659,7 +663,7 @@ pre {
         """
 
         self.validate_login()
-        if name is None:
+        if name == '':
             # Parameter 'name' required
             raise cherrypy.HTTPRedirect('list')
 
