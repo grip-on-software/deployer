@@ -22,7 +22,7 @@ from argparse import ArgumentParser
 from typing import Any, Dict
 import cherrypy
 from server.bootstrap import Bootstrap
-from deployment import Deployer
+from .application import Deployer
 
 class Bootstrap_Deployer(Bootstrap):
     """
