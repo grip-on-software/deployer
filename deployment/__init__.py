@@ -22,4 +22,4 @@ from .application import Deployer
 from .bootstrap import Bootstrap_Deployer
 
 __all__ = ["Deployer", "Bootstrap_Deployer"]
-__version__ = "0.0.3"
+__version__ = "1.0.0"

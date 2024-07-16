@@ -1,6 +1,6 @@
 [project]
 name = "gros-deployer"
-version = "0.0.3"
+version = "1.0.0"
 description = "Grip on Software deployment interface"
 readme = "README.md"
 authors = [{name = "Leon Helwerda", email = "l.s.helwerda@liacs.leidenuniv.nl"}]
@@ -13,7 +13,7 @@ dependencies = [
     "PyYAML==6.0.1"
 ]
 classifiers=[
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Web Environment",
     "Intended Audience :: Developers",
     "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
@@ -45,8 +45,8 @@ gros-deployer = "deployment.__main__:main"
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.packages.find]
-where = ["deployment"]
+[tool.setuptools]
+packages = ["deployment"]
 
 [tool.setuptools.package-data]
 "deployment" = ["py.typed"]
