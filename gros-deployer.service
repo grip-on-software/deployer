@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=forking
-ExecStart=/usr/local/bin/virtualenv.sh /usr/local/envs/controller /usr/local/bin/deployer.py --scgi --port 8115 --daemonize --pidfile /var/log/deployer/deployer.pid --log-path /var/log/deployer --deploy-path /var/local/deployer/ --log DEBUG
+ExecStart=/usr/local/bin/virtualenv.sh /usr/local/envs/controller gros-deployer --scgi --port 8115 --daemonize --pidfile /var/log/deployer/deployer.pid --log-path /var/log/deployer --deploy-path /var/local/deployer/ --log DEBUG
 ExecReload=/bin/kill -s HUP $MAINPID
 WorkingDirectory=/srv/data-gathering
 KillSignal=SIGTERM

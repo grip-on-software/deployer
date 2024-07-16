@@ -1,0 +1,29 @@
+[
+    {
+        "name": "monetdb-import",
+        "git_path": "test/sample/deploy/monetdb-import",
+        "git_url": "https://github.com/grip-on-software/monetdb-import",
+        "git_branch": "master",
+        "deploy_key": "test/sample/deploy/key-monetdb-import",
+        "jenkins_job": "build-monetdb-import",
+        "jenkins_git": "1",
+        "jenkins_states": [
+            "SUCCESS",
+            "UNSTABLE"
+        ],
+        "artifacts": "dist.zip",
+        "script": "python Scripts/recreate_database.py",
+        "services": [
+            "monetdb",
+            "",
+            "nonexistent-service"
+        ],
+        "bigboat_url": "http://bigboat.test/",
+        "bigboat_key": "abcdef",
+        "bigboat_compose": "",
+        "secret_files": {
+            "settings.cfg": "[monetdb]\nhostname = localhost\npassphrase = monetdb-root\nusername = monetdb\npassword = monetdb\ndatabase = gros\n[jenkins]\nhost = \njob = \nusername = \ntoken = \ncrumb = yes\n[schema]\nurl =\ndoc = Database_structure.md\npath = create-tables.sql\nverify = True\nusername =\npassword =\n",
+            "tables-documentation.json": "{}"
+        }
+    }
+]

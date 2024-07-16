@@ -41,7 +41,7 @@ except ImportError:
 from gatherer.jenkins import Jenkins
 from server.application import Authenticated_Application
 from server.template import Template
-from .deployment import Deployments, Deployment, Fields
+from .deployment import Config, Deployments, Deployment, Fields
 from .task import Deploy_Task
 
 Parameter = Union[str, Part, List[Part]]
@@ -105,11 +105,21 @@ class Deployer(Authenticated_Application):
 
         self._template = Template()
 
+        self._jenkins = Jenkins.from_config(self.config)
+
         self._deploy_progress: \
             Dict[str, Dict[str, Union[str, Optional[Deploy_Task]]]] = {}
         cherrypy.engine.subscribe('stop', self._stop_threads)
         cherrypy.engine.subscribe('graceful', self._stop_threads)
         cherrypy.engine.subscribe('deploy', self._set_deploy_progress)
+
+    @property
+    def jenkins(self) -> Jenkins:
+        """
+        Retrieve the Jenkins API interface.
+        """
+
+        return self._jenkins
 
     def _format_html(self, title: str = '', content: str = '') -> str:
         return self._template.format(self.COMMON_HTML, title=title,
@@ -251,6 +261,13 @@ pre {
 
         return self._deployments
 
+    def reset_deployments(self) -> None:
+        """
+        Force the deployments to be read from the JSON file again.
+        """
+
+        self._deployments = None
+
     def _get_session_html(self) -> str:
         return self._template.format("""
             <div class="logout">
@@ -350,8 +367,7 @@ pre {
                     "input_type": 'checkbox'
                 })
             elif field_type == "job":
-                jenkins = Jenkins.from_config(self.config)
-                jobs = [job.name for job in jenkins.jobs]
+                jobs = [job.name for job in self._jenkins.jobs]
                 form += self._format_options_field(field, jobs,
                                                    display_name='Other job')
             elif field_type == "branch":
@@ -481,33 +497,35 @@ pre {
             new_files = kwargs.pop("secret_files", [])
             if isinstance(new_files, (Part, list)):
                 self._upload_files(secret_files, new_files)
+        else:
+            secret_files = {}
 
         services = str(kwargs.pop("services", ''))
         states = str(kwargs.pop("jenkins_states", ''))
-        branch = kwargs.pop("git_branch", '')
+        branch = str(kwargs.pop("git_branch", ''))
         if branch == '':
-            branch = kwargs.pop("git_branch_other", "master")
-        job = kwargs.pop("jenkins_job", '')
+            branch = str(kwargs.pop("git_branch_other", "master"))
+        job = str(kwargs.pop("jenkins_job", ''))
         if job == '':
-            job = kwargs.pop("jenkins_job_other", '')
+            job = str(kwargs.pop("jenkins_job_other", ''))
 
-        deployment = {
+        deployment: Config = {
             "name": name,
-            "git_path": kwargs.pop("git_path", ''),
-            "git_url": kwargs.pop("git_url", ''),
+            "git_path": str(kwargs.pop("git_path", '')),
+            "git_url": str(kwargs.pop("git_url", '')),
             "git_branch": branch,
             "deploy_key": deploy_key,
             "jenkins_job": job,
-            "jenkins_git": kwargs.pop("jenkins_git", ''),
+            "jenkins_git": str(kwargs.pop("jenkins_git", '')),
             "jenkins_states": states.split(',') if states != '' else
                 states.split(None),
-            "artifacts": kwargs.pop("artifacts", ''),
-            "script": kwargs.pop("script", ''),
+            "artifacts": str(kwargs.pop("artifacts", '')),
+            "script": str(kwargs.pop("script", '')),
             "services": services.split(',') if services != '' else
                 services.split(None),
-            "bigboat_url": kwargs.pop("bigboat_url", ''),
-            "bigboat_key": kwargs.pop("bigboat_key", ''),
-            "bigboat_compose": kwargs.pop("bigboat_compose", ''),
+            "bigboat_url": str(kwargs.pop("bigboat_url", '')),
+            "bigboat_key": str(kwargs.pop("bigboat_key", '')),
+            "bigboat_compose": str(kwargs.pop("bigboat_compose", '')),
             "secret_files": secret_files
         }
         self.deployments.add(deployment)
@@ -593,7 +611,7 @@ pre {
 
             old_deployment = self._find_deployment(old_name)
             self.deployments.remove(old_deployment)
-            if kwargs.pop("deploy_key"):
+            if kwargs.pop("deploy_key", ''):
                 # Keep the deploy key according to checkbox state
                 deploy_key = str(old_deployment.get("deploy_key", ''))
                 state = 'original'
@@ -697,7 +715,7 @@ pre {
 
             return self._format_html(title='Deploy', content=content)
 
-        thread = Deploy_Task(deployment, self.config, bus=cherrypy.engine)
+        thread = Deploy_Task(deployment, self._jenkins, bus=cherrypy.engine)
         self._deploy_progress[name] = {
             'state': 'starting',
             'message': 'Thread is starting',

@@ -31,7 +31,7 @@ from gatherer.jenkins import Jenkins, Build
 from gatherer.version_control.repo import RepositorySourceException
 from gatherer.version_control.review import Review_System
 
-ConfigItem = Any
+ConfigItem = Union[str, bool, List[str], Dict[str, str]]
 Config = Dict[str, ConfigItem]
 DeploymentLike = Union[Config, 'Deployment', str]
 Fields = List[Tuple[str, str, Dict[str, Any]]]
@@ -302,7 +302,9 @@ class Deployment(Mapping):
         if build.building:
             raise ValueError("Build is not complete")
 
-        states: List[str] = self._config.get("jenkins_states", ["SUCCESS"])
+        states = self._config.get("jenkins_states", ["SUCCESS"])
+        if not isinstance(states, list):
+            raise TypeError(f"Deployment jenkins_states is not a list, but {type(states)}")
         result = build.result
         if result not in states:
             raise ValueError(f"Build result was not {' or '.join(states)}, but {result}")
@@ -319,4 +321,4 @@ class Deployment(Mapping):
         return len(self._config)
 
     def __repr__(self) -> str:
-        return 'Deployment(name={self._config["name"]!r})'
+        return f'Deployment(name={self._config["name"]!r})'
