@@ -3,7 +3,7 @@ GROS deployment interface
 
 [![PyPI](https://img.shields.io/pypi/v/gros-deployer.svg)](https://pypi.python.org/pypi/gros-deployer)
 [![Build 
-status](https://github.com/grip-on-software/deployer/actions/workflows/status-tests.yml/badge.svg)](https://github.com/grip-on-software/deployer/actions/workflows/status-tests.yml)
+status](https://github.com/grip-on-software/deployer/actions/workflows/deployer-tests.yml/badge.svg)](https://github.com/grip-on-software/deployer/actions/workflows/deployer-tests.yml)
 [![Coverage 
 Status](https://coveralls.io/repos/github/grip-on-software/deployer/badge.svg?branch=master)](https://coveralls.io/github/grip-on-software/deployer?branch=master)
 [![Quality Gate
