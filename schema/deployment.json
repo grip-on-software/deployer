@@ -86,7 +86,8 @@
                     },
                     "description": "Files to add to the repository when updating the deployment."
                 }
-            }
+            },
+            "required": ["name", "git_path"]
         }
     }
 }
