@@ -1,0 +1,59 @@
+[project]
+name = "gros-deployer"
+version = "0.0.3"
+description = "Grip on Software deployment interface"
+readme = "README.md"
+authors = [{name = "Leon Helwerda", email = "l.s.helwerda@liacs.leidenuniv.nl"}]
+license = {text = "Apache 2.0"}
+requires-python = ">=3.8"
+dependencies = [
+    "gros-gatherer==1.0.0",
+    "gros-server==1.0.0",
+    "bigboat==1.0.1",
+    "PyYAML==6.0.1"
+]
+classifiers=[
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+keywords = ["deployment-application", "quality-gate"]
+
+[project.scripts]
+gros-deployer = "deployment.__main__:main"
+
+[project.urls]
+"Homepage" = "https://gros.liacs.nl"
+"PyPI" = "https://pypi.python.org/pypi/gros-deployer"
+"Source Code" = "https://github.com/grip-on-software/deployer"
+"Issues" = "https://github.com/grip-on-software/deployer/issues"
+"Pull Requests" = "https://github.com/grip-on-software/deployer/pulls"
+"CI: GitHub Actions" = "https://github.com/grip-on-software/deployer/actions"
+"CI: Coveralls" = "https://coveralls.io/github/grip-on-software/deployer?branch=master"
+"CI: SonarCloud" = "https://sonarcloud.io/project/overview?id=grip-on-software_deployer"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["deployment"]
+
+[tool.setuptools.package-data]
+"deployment" = ["py.typed"]
+
+[tool.mypy]
+mypy_path = "typeshed"
+
+[tool.pytest.ini_options]
+testpaths = "test"
+python_files = "*.py"

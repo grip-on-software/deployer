@@ -5,8 +5,6 @@
 *.pyc
 *.swp
 *.log
-deploy/
-mypy-report/
 
 # Pip installation
 src/*/
@@ -31,3 +29,22 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# Deployment
+/deploy/
+deployment.json
+!test/sample/deploy/deployment.json
+key-*
+!test/sample/deploy/key-monetdb-import.pub
+
+# Typing coverage
+.mypy_cache/
+mypy-report/
+
+# Pylint
+pylint-report.txt
+
+# Unit tests and coverage
+.coverage
+htmlcov/
+test-reports/

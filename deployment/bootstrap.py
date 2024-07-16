@@ -1,9 +1,9 @@
 """
-Entry point for the deployer Web service.
+Module for bootstrapping the deployer Web service.
 
 Copyright 2017-2020 ICTU
 Copyright 2017-2022 Leiden University
-Copyright 2017-2023 Leon Helwerda
+Copyright 2017-2024 Leon Helwerda
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -43,14 +43,3 @@ class Bootstrap_Deployer(Bootstrap):
 
     def mount(self, conf: Dict[str, Dict[str, Any]]) -> None:
         cherrypy.tree.mount(Deployer(self.args, self.config), '/deploy', conf)
-
-def main() -> None:
-    """
-    Main entry point.
-    """
-
-    bootstrap = Bootstrap_Deployer()
-    bootstrap.bootstrap()
-
-if __name__ == '__main__':
-    main()

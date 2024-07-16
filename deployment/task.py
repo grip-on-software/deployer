@@ -18,7 +18,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from configparser import RawConfigParser
 import logging
 import os
 from pathlib import Path
@@ -38,7 +37,7 @@ if TYPE_CHECKING:
 else:
     PathLike = Union[str, os.PathLike]
 
-class Thread_Interrupt(Exception):
+class Thread_Interrupt(SystemExit):
     """
     Exception indicating that the thread is stopped from an external source.
     """
@@ -54,19 +53,19 @@ class Deploy_Task(threading.Thread):
         ('bigboat-compose.yml', 'bigboatCompose')
     ]
 
-    def __init__(self, deployment: Deployment, config: RawConfigParser,
+    def __init__(self, deployment: Deployment, jenkins: Jenkins,
                  bus: Optional[Bus] = None):
         super().__init__()
         self._deployment = deployment
         self._name = str(deployment["name"])
-        self._config = config
+        self._jenkins = jenkins
         self._bus = bus
         self._stop = False
 
     def run(self) -> None:
         try:
             self._deploy()
-        except (KeyboardInterrupt, SystemExit, Thread_Interrupt):
+        except (KeyboardInterrupt, SystemExit):
             pass
         except (RuntimeError, ValueError) as error:
             self._publish('error', str(error))
@@ -103,7 +102,7 @@ class Deploy_Task(threading.Thread):
                 dirname.mkdir(parents=True)
 
             # Download the artifact to the repository path
-            url = f'{last_build.base_url}/artifact/{path}'
+            url = f'{last_build.base_url}artifact/{path}'
             request = session.get(url)
             with repo_artifact.open('wb') as repo_file:
                 repo_file.write(request.content)
@@ -200,7 +199,9 @@ class Deploy_Task(threading.Thread):
                 raise RuntimeError(f'Could not run script {script}: {output}') from error
 
         # Restart services
-        services: List[str] = self._deployment["services"]
+        services = self._deployment["services"]
+        if not isinstance(services, list):
+            raise RuntimeError(f"Deployment services is not a list, but {type(services)}")
         for service in services:
             if service != '':
                 self._publish('progress', f'Restarting service {service}')

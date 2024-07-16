@@ -1,9 +1,9 @@
 """
-Deployer package.
+Entry point for the deployer Web service.
 
 Copyright 2017-2020 ICTU
 Copyright 2017-2022 Leiden University
-Copyright 2017-2023 Leon Helwerda
+Copyright 2017-2024 Leon Helwerda
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,8 +18,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from .application import Deployer
-from .bootstrap import Bootstrap_Deployer
+from deployment import Bootstrap_Deployer
 
-__all__ = ["Deployer", "Bootstrap_Deployer"]
-__version__ = "0.0.3"
+def main() -> None:
+    """
+    Main entry point.
+    """
+
+    bootstrap = Bootstrap_Deployer()
+    bootstrap.bootstrap()
+
+if __name__ == '__main__':
+    main()
