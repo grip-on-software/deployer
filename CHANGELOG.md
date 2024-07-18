@@ -25,7 +25,7 @@ and we adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   if it is given instead of `name`, such that the form is properly reloaded 
   with the unchanged state if the user is logged out when attempting to submit.
 
-## [0.0.3] - 2024-06-25
+## [0.0.3] - 2024-06-27
 
 ### Added
 
